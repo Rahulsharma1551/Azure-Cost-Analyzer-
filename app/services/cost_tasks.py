@@ -19,10 +19,14 @@ async def fetch_process_save(fetch_func, preprocess_func, save_func):
             - billing_period_id: The ID of the billing period associated with the records.
             - saved_count: The number of records successfully saved.
     """
+    processed_records = []
+    billing_period = None
+    saved_count = 0
+    billing_start, billing_end = get_current_month_period()
+
     try:
         raw_result = await fetch_func()
         normalized_data = normalize_cost_response(raw_result)
-        billing_start, billing_end = get_current_month_period()
         processed_records = preprocess_func(normalized_data, billing_start, billing_end)
     except DataProcessingError as e:
         if settings.show_debug_info:
@@ -42,4 +46,5 @@ async def fetch_process_save(fetch_func, preprocess_func, save_func):
         else:
             logger.error("Error occured while saving data")
 
-    return processed_records, billing_period.id, saved_count
+    billing_period_id = billing_period.id if billing_period else None
+    return processed_records, billing_period_id, saved_count
