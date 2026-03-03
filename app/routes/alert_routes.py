@@ -169,27 +169,48 @@ async def deactivate_alert_threshold(
 # Alert event endpoints
 
 
-@router.get("/events")
-async def list_alert_event_records(
+@router.get("/events", summary="List alert events")
+async def get_alert_events(
     status: str | None = Query(
-        default=None,
-        description="Filter by status: open | acknowledged",
+        default=None, description="Filter by status: 'open' or 'acknowledged'"
     ),
     service_id: int | None = Query(default=None, description="Filter by service ID"),
     period_type: PeriodType | None = Query(
-        default=None, description="Filter by period type: daily | monthly"
+        default=None, description="Filter by period type"
     ),
+    limit: int = Query(
+        default=50, ge=1, le=200, description="Number of results per page"
+    ),
+    offset: int = Query(default=0, ge=0, description="Number of results to skip"),
     session: AsyncSession = Depends(get_session),
-):
-    """List alert events with optional filters."""
-    events = await list_alert_events(
-        session,
-        status=status,
-        service_id=service_id,
-        period_type=period_type,
-    )
-    data = [(await _enrich_event(e, session)).model_dump() for e in events]
-    return {"status": "success", "count": len(data), "data": data}
+) -> dict:
+    """List alert events with optional filters and pagination."""
+    try:
+        events, total = await list_alert_events(
+            session,
+            status=status,
+            service_id=service_id,
+            period_type=period_type,
+            limit=limit,
+            offset=offset,
+        )
+        data = [(await _enrich_event(e, session)).model_dump() for e in events]
+        return {
+            "status": "success",
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": (offset + limit) < total,
+            "data": data,
+        }
+    except Exception as exc:
+        err_msg = (
+            f"Failed to retrieve alert events: {exc}"
+            if settings.show_debug_info
+            else "Failed to retrieve alert events."
+        )
+        logger.error(err_msg)
+        raise HTTPException(status_code=500, detail=err_msg)
 
 
 @router.post("/events/{alert_id}/acknowledge")
@@ -305,7 +326,7 @@ async def list_anomaly_log_records(
 @router.patch(
     "/settings",
     response_model=AnomalySettingsRead,
-    summary="Get global anomaly detection settings",
+    summary="Update global anomaly detection settings",
 )
 async def update_alert_settings(
     payload: AnomalySettingsUpdate,

@@ -3,7 +3,7 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlmodel import col, select
+from sqlmodel import col, select, func
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from db.models import (
@@ -179,17 +179,34 @@ async def list_alert_events(
     status: str | None = None,
     service_id: int | None = None,
     period_type: PeriodType | None = None,
-) -> list[AlertEvent]:
-    """Return alert events, optionally filtered."""
-    query = select(AlertEvent).order_by(col(AlertEvent.triggered_at).desc())
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[AlertEvent], int]:
+    """Return alert events, optionally filtered.
+    Returns a tuple of (events, total_count) for pagination metadata."""
+    conditions = []
     if status is not None:
-        query = query.where(AlertEvent.status == status)
+        conditions.append(AlertEvent.status == status)
     if service_id is not None:
-        query = query.where(AlertEvent.service_id == service_id)
+        conditions.append(AlertEvent.service_id == service_id)
     if period_type is not None:
-        query = query.where(AlertEvent.period_type == period_type)
-    result = await session.exec(query)
-    return list(result.all())
+        conditions.append(AlertEvent.period_type == period_type)
+
+    count_query = select(func.count()).select_from(AlertEvent)
+    if conditions:
+        count_query = count_query.where(*conditions)
+    total = (await session.exec(count_query)).one()
+
+    # Paginated data query
+    data_query = (
+        select(AlertEvent)
+        .where(*conditions)
+        .order_by(col(AlertEvent.triggered_at).desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await session.exec(data_query)
+    return list(result.all()), total
 
 
 async def acknowledge_alert(
