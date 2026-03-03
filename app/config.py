@@ -102,6 +102,48 @@ class Settings(BaseSettings):
         description="Minutes between service cost fetches (0-59 min)",
     )
 
+    # Alert system configuration
+    ALERT_K_VALUE: float = Field(
+        default=2.0,
+        gt=0,
+        description="k multiplier for statistical threshold (mean + k * std)",
+    )
+    ALERT_PERCENTAGE_BUFFER: float = Field(
+        default=1.5,
+        gt=1.0,
+        description="Multiplier for percentage threshold (mean * pct_buffer)",
+    )
+    ALERT_HISTORY_DAYS: int = Field(
+        default=30,
+        gt=0,
+        description="Rolling window in days for daily cost statistics",
+    )
+    ALERT_HISTORY_MONTHS: int = Field(
+        default=3,
+        gt=0,
+        description="Number of past billing periods used for monthly cost statistics",
+    )
+
+    # Alert email configuration
+    ALERT_EMAIL_ENABLED: bool = Field(
+        default=False,
+        description="Enable email notifications for alert breaches",
+    )
+    ALERT_EMAIL_FROM: str | None = Field(
+        default=None,
+        description="Sender email address for alert notifications",
+    )
+    ALERT_EMAIL_TO: str = Field(
+        default_factory="",
+        description="Recipient email addresses (comma-separated in .env)",
+    )
+    SMTP_HOST: str | None = Field(default=None, description="SMTP server hostname")
+    SMTP_PORT: int = Field(default=587, description="SMTP server port")
+    SMTP_USER: str | None = Field(default=None, description="SMTP authentication user")
+    SMTP_PASSWORD: str | None = Field(
+        default=None, description="SMTP authentication password"
+    )
+
     @property
     def is_development(self) -> bool:
         """Check if running in development mode."""
@@ -132,6 +174,10 @@ class Settings(BaseSettings):
         """Get DATABASE_URL as string for SQLAlchemy."""
         return str(self.DATABASE_URL)
 
+    @property
+    def alert_email_recipients(self) -> list[str]:
+        return [e.strip() for e in self.ALERT_EMAIL_TO.split(",") if e.strip()]
+
     @model_validator(mode="after")
     def validate_minutes(self):
         if (
@@ -149,6 +195,27 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SERVICE_COST_HOUR and SERVICE_COST_MINUTE cannot both be zero. This would cause the scheduler to run infinitely."
             )
+
+        if self.ALERT_EMAIL_ENABLED:
+            missing = [
+                field
+                for field in (
+                    "ALERT_EMAIL_FROM",
+                    "SMTP_HOST",
+                    "SMTP_USER",
+                    "SMTP_PASSWORD",
+                )
+                if not getattr(self, field)
+            ]
+            if missing:
+                raise ValueError(
+                    f"ALERT_EMAIL_ENABLED=true requires these fields to be set: {', '.join(missing)}"
+                )
+            if not self.alert_email_recipients:
+                raise ValueError(
+                    "ALERT_EMAIL_ENABLED=true requires ALERT_EMAIL_TO to contain at least one recipient."
+                )
+
         return self
 
 

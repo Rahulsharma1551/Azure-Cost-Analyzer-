@@ -8,7 +8,10 @@ from fastapi import FastAPI
 
 from loguru import logger
 from routes.cost_routes import router as cost_router
+from routes.alert_routes import router as alert_router
 from services.cost_service import shutdown_executor
+from services.alert_service import shutdown_email_executor
+from db.alert_operations import seed_anomaly_settings
 from db.database import init_db, close_db, get_session_context
 
 from handlers.exception_handlers import register_exception_handlers
@@ -32,6 +35,11 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized successfully")
 
+    logger.info("Seeding anomaly settings...")
+    async with get_session_context() as session:
+        await seed_anomaly_settings(session)
+    logger.info("Anomaly settings ready")
+
     if settings.ENABLE_SCHEDULER:
         logger.info("Starting background scheduler...")
         start_scheduler()
@@ -53,6 +61,7 @@ async def lifespan(app: FastAPI):
     await close_db()
     logger.info("Database connections closed")
     shutdown_executor()
+    shutdown_email_executor()
     logger.info("Cleanup complete")
 
 
@@ -74,6 +83,7 @@ register_exception_handlers(app)
 
 # Register routers
 app.include_router(cost_router)
+app.include_router(alert_router)
 
 
 @app.get("/")

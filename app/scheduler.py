@@ -3,11 +3,14 @@ from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from config import settings
+from db.database import get_session_context
+from db.models import PeriodType
 from db.operations import (
     save_daily_costs,
     save_service_costs,
 )
 from loguru import logger
+from services.alert_service import evaluate_thresholds
 from services.cost_preprocessor import (
     preprocess_daily_costs,
     preprocess_service_costs,
@@ -24,7 +27,8 @@ scheduler: AsyncIOScheduler | None = None
 
 async def fetch_and_save_daily_costs() -> None:
     """
-    Background job to fetch daily costs and save to database.
+    Background job to fetch daily costs, save to database, then evaluate
+    daily alert thresholds.
     """
     job_start = datetime.now()
     logger.info("Starting scheduled job: fetch_and_save_daily_costs")
@@ -46,11 +50,24 @@ async def fetch_and_save_daily_costs() -> None:
             f"Failed scheduled job: fetch_and_save_daily_costs "
             f"(duration: {duration:.2f}s, error: {e})"
         )
+        return  # Do not proceed to alert evaluation if cost fetch failed
+
+    # Evaluate daily alert thresholds after a successful save
+    try:
+        async with get_session_context() as session:
+            summary = await evaluate_thresholds(session, PeriodType.DAILY)
+        logger.info(
+            f"Daily alert evaluation complete: evaluated={summary.evaluated} "
+            f"breaches={summary.breaches} new_alerts={summary.breaches}"
+        )
+    except Exception as exc:
+        logger.error(f"Daily alert evaluation failed (non-fatal): {exc}")
 
 
 async def fetch_and_save_service_costs() -> None:
     """
-    Background job to fetch month-to-date service costs and save to database.
+    Background job to fetch month-to-date service costs, save to database,
+    then evaluate monthly alert thresholds.
     """
     job_start = datetime.now()
     logger.info("Starting scheduled job: fetch_and_save_service_costs")
@@ -74,6 +91,18 @@ async def fetch_and_save_service_costs() -> None:
             f"Failed scheduled job: fetch_and_save_service_costs "
             f"(duration: {duration:.2f}s, error: {e})"
         )
+        return  # Do not proceed to alert evaluation if cost fetch failed
+
+    # Evaluate monthly alert thresholds after a successful save
+    try:
+        async with get_session_context() as session:
+            summary = await evaluate_thresholds(session, PeriodType.MONTHLY)
+        logger.info(
+            f"Monthly alert evaluation complete: evaluated={summary.evaluated} "
+            f"breaches={summary.breaches} new_alerts={summary.breaches}"
+        )
+    except Exception as exc:
+        logger.error(f"Monthly alert evaluation failed (non-fatal): {exc}")
 
 
 def create_scheduler() -> AsyncIOScheduler:

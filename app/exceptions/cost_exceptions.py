@@ -23,3 +23,9 @@ class DataProcessingError(CostServiceError):
     """Exception raised when data processing fails."""
 
     pass
+
+
+class AlertError(CostServiceError):
+    """Exception raised when alert evaluation or notification fails."""
+
+    pass

@@ -1,6 +1,7 @@
 from fastapi import Request
 from loguru import logger
 from exceptions.cost_exceptions import (
+    AlertError,
     AzureApiError,
     DataProcessingError,
     DataValidationError,
@@ -39,6 +40,16 @@ async def data_validation_error_handler(request: Request, exc: DataValidationErr
     )
 
 
+async def alert_error_handler(request: Request, exc: AlertError):
+    logger.error(f"Alert system error: {exc}")
+    return create_error_response(
+        status_code=500,
+        message="Alert system error" if settings.is_production else str(exc),
+        exc=exc,
+        include_debug=True,
+    )
+
+
 async def generic_error_handler(request: Request, exc: Exception):
     logger.exception(f"Unexpected error: {exc}")
     return create_error_response(
@@ -54,4 +65,5 @@ def register_exception_handlers(app):
     app.add_exception_handler(AzureApiError, azure_api_error_handler)
     app.add_exception_handler(DataProcessingError, data_processing_error_handler)
     app.add_exception_handler(DataValidationError, data_validation_error_handler)
+    app.add_exception_handler(AlertError, alert_error_handler)
     app.add_exception_handler(Exception, generic_error_handler)
