@@ -95,7 +95,10 @@ async def _get_latest_daily_cost(
     try:
         result = await session.exec(
             select(DailyCost)
-            .where(DailyCost.service_id == service_id)
+            .where(
+                DailyCost.service_id == service_id,
+                DailyCost.usage_date < date.today(),
+            )
             .order_by(col(DailyCost.usage_date).desc())
             .limit(1)
         )
