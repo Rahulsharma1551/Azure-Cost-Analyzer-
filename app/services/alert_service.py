@@ -1,12 +1,10 @@
 """Alert evaluation engine and email notification service."""
 
 import asyncio
-import smtplib
-from concurrent.futures import ThreadPoolExecutor
+
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+
 from math import isfinite, sqrt
 
 from loguru import logger
@@ -33,9 +31,7 @@ from db.models import (
 )
 from exceptions.cost_exceptions import AlertError
 from models.alert_models import AlertEvaluationSummary, AlertEventRead
-
-# Thread pool for blocking SMTP calls
-_email_executor = ThreadPoolExecutor(max_workers=1)
+from services.email_service import _send_alert_email_sync, _email_executor
 
 
 # Statistical helpers
@@ -447,62 +443,3 @@ def _event_to_read(event: AlertEvent) -> AlertEventRead:
         acknowledged_at=event.acknowledged_at,
         triggered_at=event.triggered_at,
     )
-
-
-# Email helper (sync — runs in executor)
-
-
-def _send_alert_email_sync(events: list[AlertEvent]) -> None:
-    """Synchronous email sender — called via run_in_executor to avoid blocking."""
-    if not events:
-        return
-
-    subject = f"[Azure Cost Analyzer] {len(events)} cost alert(s) breached"
-
-    lines = [
-        "The following Azure service cost thresholds have been breached:\n",
-        f"{'Service':<30} {'Period':<10} {'Date':<12} {'Current Cost':>14} "
-        f"{'Threshold':>12} {'Winning Rule':<15}",
-        "-" * 85,
-    ]
-    for e in events:
-        try:
-            service_name = e.service.name
-        except Exception:
-            service_name = f"service_id={e.service_id}"
-        lines.append(
-            f"{service_name:<30} {e.period_type.value:<10} {str(e.reference_date):<12} "
-            f"{float(e.current_cost):>14.2f} {float(e.computed_threshold):>12.2f} "
-            f"{e.winning_component:<15}"
-        )
-    lines.append("\nLog in to the Azure Cost Analyzer API to acknowledge these alerts.")
-    body = "\n".join(lines)
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-
-    email_from: str = settings.ALERT_EMAIL_FROM or ""
-    smtp_host: str = settings.SMTP_HOST or ""
-    smtp_user: str = settings.SMTP_USER or ""
-    smtp_password: str = settings.SMTP_PASSWORD or ""
-    msg["From"] = email_from
-    msg["To"] = ", ".join(settings.alert_email_recipients)
-    msg.attach(MIMEText(body, "plain"))
-
-    with smtplib.SMTP(smtp_host, settings.SMTP_PORT) as smtp:
-        smtp.ehlo()
-        smtp.starttls()
-        smtp.login(smtp_user, smtp_password)
-        smtp.sendmail(
-            email_from,
-            settings.alert_email_recipients,
-            msg.as_string(),
-        )
-    logger.info(
-        f"Alert email sent to {settings.alert_email_recipients} for {len(events)} event(s)."
-    )
-
-
-def shutdown_email_executor() -> None:
-    """Gracefully shut down the email thread pool during app shutdown."""
-    _email_executor.shutdown(wait=True)

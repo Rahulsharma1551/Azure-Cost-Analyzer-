@@ -10,7 +10,7 @@ from loguru import logger
 from routes.cost_routes import router as cost_router
 from routes.alert_routes import router as alert_router
 from services.cost_service import shutdown_executor
-from services.alert_service import shutdown_email_executor
+from services.email_service import shutdown_email_executor
 from db.alert_operations import seed_anomaly_settings
 from db.database import init_db, close_db, get_session_context
 
