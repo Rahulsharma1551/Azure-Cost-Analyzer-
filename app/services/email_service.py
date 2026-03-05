@@ -28,20 +28,84 @@ def _build_email_html(events: list[AlertEvent]) -> str:
             "percentage": "#7c3aed",
         }.get(e.winning_component, "#6b7280")
 
+        def _component_cell(
+            label: str, value: float | None, color: str, winning: str
+        ) -> str:
+            if value is None:
+                return """<td style="padding:4px 8px;text-align:center">
+                    <span style="font-size:11px;color:#94a3b8">—</span>
+                </td>"""
+            is_winner = label.lower() == winning.lower()
+            border = f"2px solid {color}" if is_winner else "1px solid #e2e8f0"
+            weight = "700" if is_winner else "400"
+            return f"""<td style="padding:4px 8px;text-align:center">
+                <span style="display:inline-block;background:{"#fff"};border:{border};
+                             color:{color};border-radius:4px;padding:2px 8px;
+                             font-size:11px;font-weight:{weight}">
+                    ${value:,.2f}
+                </span>
+            </td>"""
+
+        abs_cell = _component_cell(
+            "absolute",
+            float(e.absolute_component) if e.absolute_component is not None else None,
+            "#dc2626",
+            e.winning_component,
+        )
+        stat_cell = _component_cell(
+            "statistical",
+            float(e.statistical_component)
+            if e.statistical_component is not None
+            else None,
+            "#d97706",
+            e.winning_component,
+        )
+        pct_cell = _component_cell(
+            "percentage",
+            float(e.percentage_component)
+            if e.percentage_component is not None
+            else None,
+            "#7c3aed",
+            e.winning_component,
+        )
+
         rows_html += f"""
-        <tr>
-            <td>{service_name}</td>
-            <td style="text-align:center">{e.period_type.value.capitalize()}</td>
-            <td style="text-align:center">{e.reference_date}</td>
-            <td style="text-align:right; color:#dc2626; font-weight:600">
+        <tr style="border-bottom:1px solid #f1f5f9">
+            <td style="padding:12px 12px 4px">{service_name}</td>
+            <td style="padding:12px 12px 4px;text-align:center">{e.period_type.value.capitalize()}</td>
+            <td style="padding:12px 12px 4px;text-align:center">{e.reference_date}</td>
+            <td style="padding:12px 12px 4px;text-align:right;color:#dc2626;font-weight:600">
                 ${float(e.current_cost):,.2f}
             </td>
-            <td style="text-align:right">${float(e.computed_threshold):,.2f}</td>
-            <td style="text-align:center">
+            <td style="padding:12px 12px 4px;text-align:right">${float(e.computed_threshold):,.2f}</td>
+            <td style="padding:12px 12px 4px;text-align:center">
                 <span style="background:{badge_color};color:#fff;padding:2px 8px;
                              border-radius:4px;font-size:12px;font-weight:600">
                     {e.winning_component}
                 </span>
+            </td>
+        </tr>
+        <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0">
+            <td colspan="3" style="padding:4px 12px 10px;font-size:11px;color:#94a3b8;
+                                   font-style:italic">
+                Threshold components evaluated:
+            </td>
+            <td colspan="3" style="padding:4px 12px 10px">
+                <table width="100%" cellpadding="0" cellspacing="0">
+                    <tr>
+                        <td style="font-size:11px;color:#dc2626;text-align:center;
+                                   padding-bottom:2px;font-weight:600">Absolute</td>
+                        <td style="font-size:11px;color:#d97706;text-align:center;
+                                   padding-bottom:2px;font-weight:600">Statistical</td>
+                        <td style="font-size:11px;color:#7c3aed;text-align:center;
+                                   padding-bottom:2px;font-weight:600">Percentage</td>
+                    </tr>
+                    <tr>
+                        {abs_cell}
+                        {stat_cell}
+                        {pct_cell}
+                    </tr>
+                </table>
             </td>
         </tr>"""
 
