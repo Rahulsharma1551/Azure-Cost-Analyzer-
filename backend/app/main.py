@@ -5,6 +5,8 @@ import uvicorn
 from config import settings
 
 from fastapi import FastAPI
+from typing import Any, cast
+from fastapi.middleware.cors import CORSMiddleware
 
 from loguru import logger
 from routes.cost_routes import router as cost_router
@@ -76,6 +78,13 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.show_docs else None,
 )
 
+app.add_middleware(
+    cast(Any, CORSMiddleware),
+    allow_origins=settings.CORS_ALLOW_ORIGINS,
+    allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
+    allow_methods=settings.CORS_ALLOW_METHODS,
+    allow_headers=settings.CORS_ALLOW_HEADERS,
+)
 
 # Register exception handlers
 register_exception_handlers(app)

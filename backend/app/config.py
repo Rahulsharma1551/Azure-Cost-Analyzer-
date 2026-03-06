@@ -1,5 +1,6 @@
 from enum import Enum
-from pydantic import Field, PostgresDsn, model_validator
+from typing import Any
+from pydantic import Field, PostgresDsn, model_validator, field_validator, EmailStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import logging
 from loguru import logger
@@ -65,6 +66,11 @@ class Settings(BaseSettings):
     ENVIRONMENT: Environment = Field(default=Environment.DEVELOPMENT)
     DEBUG: bool = Field(default=False)
 
+    CORS_ALLOW_ORIGINS: list[str]
+    CORS_ALLOW_CREDENTIALS: bool
+    CORS_ALLOW_METHODS: list[str]
+    CORS_ALLOW_HEADERS: list[str]
+
     # Azure credentials
     AZURE_CLIENT_ID: str = Field(..., min_length=20)
     AZURE_OBJECT_ID: str = Field(..., min_length=20)
@@ -129,11 +135,11 @@ class Settings(BaseSettings):
         default=False,
         description="Enable email notifications for alert breaches",
     )
-    ALERT_EMAIL_FROM: str | None = Field(
+    ALERT_EMAIL_FROM: EmailStr | None = Field(
         default=None,
         description="Sender email address for alert notifications",
     )
-    ALERT_EMAIL_TO: str = Field(
+    ALERT_EMAIL_TO: EmailStr = Field(
         default_factory="",
         description="Recipient email addresses (comma-separated in .env)",
     )
@@ -217,6 +223,22 @@ class Settings(BaseSettings):
                 )
 
         return self
+
+    @field_validator(
+        "CORS_ALLOW_ORIGINS", "CORS_ALLOW_METHODS", "CORS_ALLOW_HEADERS", mode="before"
+    )
+    @classmethod
+    def parse_csv_or_json_array(cls, v: Any):
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            if v.startswith("["):
+                import json
+
+                return json.loads(v)
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
 
 
 settings = Settings()
