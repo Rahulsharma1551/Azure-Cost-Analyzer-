@@ -38,6 +38,7 @@ export function CostBarChart({ records }: CostBarChartProps) {
     color: getServiceColor(service, i),
     stack: "total",
     stackOrder: "appearance" as const,
+    highlightScope: { fade: "global", highlight: "item" } as const,
   }));
 
   return (
