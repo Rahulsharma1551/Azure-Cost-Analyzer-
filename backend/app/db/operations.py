@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from config import settings
@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import col, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from models.cost_models import CostRecord, DailyCostRecord
+from models.cost_models import CostRecord, CostRecordRead, DailyCostRecord
 
 
 async def get_or_create_billing_period(
@@ -241,3 +241,122 @@ async def save_daily_costs(
         else:
             logger.error("Failed to save daily costs")
             raise Exception("Database error while saving daily costs")
+
+
+async def get_daily_costs_by_range(
+    session: AsyncSession,
+    start_date: date,
+    end_date: date,
+) -> list[CostRecordRead]:
+    """
+    Read daily_cost rows joined with azure_service for the given date range.
+    Returns a flat list of CostRecordRead ready to be serialised — no Azure
+    API call involved.
+    """
+    try:
+        statement = (
+            select(
+                AzureService.name.label("service_name"),
+                AzureService.service_category.label("service_category"),
+                DailyCost.cost_amount.label("cost"),
+                DailyCost.currency_code.label("currency"),
+                DailyCost.usage_date.label("usage_date"),
+            )
+            .join(AzureService, DailyCost.service_id == AzureService.id)
+            .where(
+                DailyCost.usage_date >= start_date,
+                DailyCost.usage_date <= end_date,
+            )
+            .order_by(DailyCost.usage_date)
+        )
+
+        result = await session.exec(statement)
+        rows = result.all()
+
+        if settings.show_debug_info:
+            logger.debug(
+                f"Fetched {len(rows)} daily cost rows for range {start_date} – {end_date}"
+            )
+
+        return [
+            CostRecordRead(
+                service_name=row.service_name,
+                service_category=row.service_category,
+                cost=float(row.cost),
+                currency=row.currency,
+                date=row.usage_date.isoformat(),
+            )
+            for row in rows
+        ]
+
+    except SQLAlchemyError as e:
+        if settings.show_debug_info:
+            logger.error(
+                f"Failed to fetch daily costs for range {start_date} – {end_date}: {e}"
+            )
+            raise Exception(f"Database error while fetching daily costs: {str(e)}")
+        else:
+            logger.error("Failed to fetch daily costs")
+            raise Exception("Database error while fetching daily costs")
+
+
+async def get_monthly_costs_by_range(
+    session: AsyncSession,
+    start_date: date,
+    end_date: date,
+) -> list[CostRecordRead]:
+    """
+    Read service_cost rows joined with billing_period + azure_service whose
+    billing period start_date falls within [start_date, end_date].
+    Each row represents cost per service per billing period; the billing
+    period's start_date is used as the date field sent to the frontend.
+    """
+    try:
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        end_dt = datetime.combine(end_date, datetime.max.time())
+
+        statement = (
+            select(
+                AzureService.name.label("service_name"),
+                AzureService.service_category.label("service_category"),
+                ServiceCost.cost_amount.label("cost"),
+                ServiceCost.currency_code.label("currency"),
+                BillingPeriod.start_date.label("period_start"),
+            )
+            .join(AzureService, ServiceCost.service_id == AzureService.id)
+            .join(BillingPeriod, ServiceCost.billing_period_id == BillingPeriod.id)
+            .where(
+                col(BillingPeriod.start_date) >= start_dt,
+                col(BillingPeriod.start_date) <= end_dt,
+            )
+            .order_by(BillingPeriod.start_date)
+        )
+
+        result = await session.exec(statement)
+        rows = result.all()
+
+        if settings.show_debug_info:
+            logger.debug(
+                f"Fetched {len(rows)} monthly cost rows for range {start_date} – {end_date}"
+            )
+
+        return [
+            CostRecordRead(
+                service_name=row.service_name,
+                service_category=row.service_category,
+                cost=float(row.cost),
+                currency=row.currency,
+                date=row.period_start.date().isoformat(),
+            )
+            for row in rows
+        ]
+
+    except SQLAlchemyError as e:
+        if settings.show_debug_info:
+            logger.error(
+                f"Failed to fetch monthly costs for range {start_date} – {end_date}: {e}"
+            )
+            raise Exception(f"Database error while fetching monthly costs: {str(e)}")
+        else:
+            logger.error("Failed to fetch monthly costs")
+            raise Exception("Database error while fetching monthly costs")

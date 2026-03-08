@@ -3,6 +3,7 @@ from db.database import get_session_context
 from db.operations import get_or_create_billing_period
 from exceptions.cost_exceptions import DataProcessingError
 from loguru import logger
+from services.cache_service import cost_cache
 from services.cost_preprocessor import (
     get_current_month_period,
     normalize_cost_response,
@@ -47,4 +48,9 @@ async def fetch_process_save(fetch_func, preprocess_func, save_func):
             logger.error("Error occured while saving data")
 
     billing_period_id = billing_period.id if billing_period else None
+
+    # Invalidate the in-process cache so the next /cost/db request
+    # reflects the freshly saved data instead of stale cached rows.
+    cost_cache.clear()
+
     return processed_records, billing_period_id, saved_count

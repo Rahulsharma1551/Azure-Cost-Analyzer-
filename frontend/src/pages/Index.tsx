@@ -28,8 +28,8 @@ const Index = () => {
   });
 
   const { data, isLoading, isError, refetch } = useCostData(
-    filters.granularity,
-    filters.startDate || undefined,
+    filters.granularity,           // daily → daily_cost table, monthly → service_cost
+    filters.startDate || undefined, // undefined = backend uses ALERT_HISTORY_DAYS/MONTHS
     filters.endDate || undefined,
   );
 

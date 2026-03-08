@@ -18,6 +18,27 @@ def validate_currency_code(v: str) -> str:
     return v.upper()
 
 
+class CostRecordRead(BaseModel):
+    """
+    Flat read projection returned by DB-backed endpoints.
+    """
+
+    service_name: str
+    service_category: str | None = None
+    cost: float
+    currency: str
+    date: str  # ISO date string "YYYY-MM-DD"
+
+
+class CostQueryResponse(BaseModel):
+    """Envelope returned by GET /cost/db."""
+
+    data: list[CostRecordRead]
+    total_cost: float
+    currency: str
+    cache_hit: bool = False
+
+
 class CostRecord(BaseModel):
     """Validated and preprocessed cost record"""
 

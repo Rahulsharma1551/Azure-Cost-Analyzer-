@@ -1,26 +1,30 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchCostData } from "@/lib/api";
+import { fetchCostFromDb } from "@/lib/api";
 import { Granularity } from "@/lib/types";
 
+/**
+ * Fetches cost data from the local database via GET /cost/db.
+ *
+ * Date resolution (mirrors backend logic):
+ *   - granularity=daily,   no dates → backend uses last ALERT_HISTORY_DAYS days
+ *   - granularity=monthly, no dates → backend uses last ALERT_HISTORY_MONTHS * 30 days
+ *   - any explicit dates            → passed through as-is
+ *
+ * Caching layers:
+ *   1. React Query staleTime (60 s) — zero network requests within one minute
+ *   2. Backend TTL cache (5 min daily / 30 min monthly) — no DB query on repeat calls
+ */
 export function useCostData(
   granularity: Granularity,
   startDate?: string,
   endDate?: string,
 ) {
-  // When custom date range is provided, always use "last-7-days" endpoint
-  // (it supports arbitrary date ranges via query params) so we get full range data.
-  // Only default to "month-to-date" for monthly without custom dates.
-  const hasCustomRange = !!(startDate && endDate);
-  const endpoint = hasCustomRange
-    ? "last-7-days"
-    : granularity === "daily"
-      ? "last-7-days"
-      : "month-to-date";
-
   return useQuery({
-    queryKey: ["cost-data", endpoint, startDate, endDate],
-    queryFn: () => fetchCostData(endpoint, startDate, endDate),
+    // Include all three params in the key so React Query caches each unique
+    // combination separately and re-fetches automatically when any changes.
+    queryKey: ["cost-data", granularity, startDate ?? "", endDate ?? ""],
+    queryFn: () => fetchCostFromDb(granularity, startDate, endDate),
     retry: 1,
-    staleTime: 60_000,
+    staleTime: 60_000, // 60 seconds — layer-1 cache in the browser
   });
 }

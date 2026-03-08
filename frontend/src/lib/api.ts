@@ -7,52 +7,48 @@ const defaultHeaders: HeadersInit = {
   "ngrok-skip-browser-warning": "true",
 };
 
-export async function fetchCostData(
-  endpoint: "last-7-days" | "month-to-date",
+export async function fetchCostFromDb(
+  granularity: "daily" | "monthly",
   startDate?: string,
   endDate?: string,
 ): Promise<CostResponse> {
-  const url = new URL(`${base()}/cost/${endpoint}`);
+  const url = new URL(`${base()}/cost/db`);
+  url.searchParams.set("granularity", granularity);
   if (startDate) url.searchParams.set("start_date", startDate);
   if (endDate) url.searchParams.set("end_date", endDate);
 
   const res = await fetch(url.toString(), { headers: defaultHeaders });
   if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
 
-  interface RawRecord {
+  interface DbRecord {
     service_name: string;
-    service_category: string;
+    service_category: string | null;
     cost: number;
     currency: string;
-    usage_date?: string;
-    date?: string;
-    billing_period_start?: string;
+    date: string;
   }
 
-  interface RawResponse {
-    data?: RawRecord[];
+  interface DbResponse {
+    data?: DbRecord[];
     total_cost?: number;
     currency?: string;
+    cache_hit?: boolean;
   }
 
-  const json = (await res.json()) as RawResponse;
+  const json = (await res.json()) as DbResponse;
   const data = (json.data ?? []).map((r) => ({
     service_name: r.service_name,
-    service_category: r.service_category,
+    service_category: r.service_category ?? "",
     cost: r.cost,
     currency: r.currency,
-    date:
-      r.usage_date ??
-      r.date ??
-      r.billing_period_start ??
-      new Date().toISOString(),
+    date: r.date,
   }));
 
   return {
     data,
-    total_cost:
-      json.total_cost ?? data.reduce((s, r) => s + r.cost, 0),
+    total_cost: json.total_cost ?? data.reduce((s, r) => s + r.cost, 0),
     currency: json.currency ?? data[0]?.currency ?? "INR",
+    cache_hit: json.cache_hit ?? false,
   };
 }
 

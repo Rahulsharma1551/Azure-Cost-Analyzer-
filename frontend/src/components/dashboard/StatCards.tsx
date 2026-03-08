@@ -49,7 +49,16 @@ export function StatCards({ data, budget, alertSent }: StatCardsProps) {
   const activeServices = serviceMap.size;
   const budgetPct = budget > 0 ? Math.round((totalCost / budget) * 100) : 0;
 
-  const pctChange = records.length > 0 ? 12 : 0;
+  // Split records into two equal halves by date, compare totals to get real % change
+  const pctChange = (() => {
+    if (records.length < 2) return 0;
+    const sorted = [...records].sort((a, b) => a.date.localeCompare(b.date));
+    const mid = Math.floor(sorted.length / 2);
+    const firstHalf = sorted.slice(0, mid).reduce((s, r) => s + r.cost, 0);
+    const secondHalf = sorted.slice(mid).reduce((s, r) => s + r.cost, 0);
+    if (firstHalf === 0) return 0;
+    return Math.round(((secondHalf - firstHalf) / firstHalf) * 100);
+  })();
   const isUp = pctChange > 0;
 
   const budgetBarColor =

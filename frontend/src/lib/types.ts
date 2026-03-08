@@ -10,6 +10,7 @@ export interface CostResponse {
   data: CostRecord[];
   total_cost: number;
   currency: string;
+  cache_hit?: boolean; // true when served from the backend TTL cache
 }
 
 export type Granularity = "daily" | "monthly";

@@ -39,6 +39,7 @@ export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
   const [endDate, setEndDate] = useState<Date | undefined>(
     filters.endDate ? new Date(filters.endDate) : undefined,
   );
+  const [quickRange, setQuickRange] = useState<string>("");
 
   const handleReset = () => {
     setGranularity("daily");
@@ -46,6 +47,7 @@ export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
     setBudget(0);
     setStartDate(undefined);
     setEndDate(undefined);
+    setQuickRange("");
     onApplyFilters({
       granularity: "daily",
       groupBy: "service",
@@ -74,8 +76,9 @@ export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
             Quick Range
           </label>
           <Select
-            value=""
+            value={quickRange}
             onValueChange={(v) => {
+              setQuickRange(v);
               const today = new Date();
               let s: Date | undefined;
               const e: Date = today;
@@ -169,7 +172,7 @@ export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
               <Calendar
                 mode="single"
                 selected={startDate}
-                onSelect={setStartDate}
+                onSelect={(d) => { setStartDate(d); setQuickRange(""); }}
                 initialFocus
                 className="p-3 pointer-events-auto"
               />
@@ -202,7 +205,7 @@ export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
               <Calendar
                 mode="single"
                 selected={endDate}
-                onSelect={setEndDate}
+                onSelect={(d) => { setEndDate(d); setQuickRange(""); }}
                 initialFocus
                 className="p-3 pointer-events-auto"
               />
