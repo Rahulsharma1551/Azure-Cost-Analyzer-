@@ -341,6 +341,10 @@ async def update_anomaly_settings(
         row.alert_history_days = payload.alert_history_days
     if payload.alert_history_months is not None:
         row.alert_history_months = payload.alert_history_months
+    if payload.email_enabled is not None:
+        row.email_enabled = payload.email_enabled
+    if "receiver_email" in payload.model_fields_set:
+        row.receiver_email = payload.receiver_email
 
     row.updated_at = datetime.now(timezone.utc)
     session.add(row)

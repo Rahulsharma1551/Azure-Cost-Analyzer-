@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useState, useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { FilterSettings, AlertSettings } from "@/lib/types";
+import { FilterSettings } from "@/lib/types";
+import { getAlertThresholds } from "@/lib/api";
 import { useCostData } from "@/hooks/use-cost-data";
 import { ControlPanel } from "@/components/dashboard/ControlPanel";
 import { StatCards } from "@/components/dashboard/StatCards";
@@ -9,70 +10,40 @@ import { CostAreaChart } from "@/components/dashboard/CostAreaChart";
 import { CostBarChart } from "@/components/dashboard/CostBarChart";
 import { CostDonutChart } from "@/components/dashboard/CostDonutChart";
 import { CostTable } from "@/components/dashboard/CostTable";
-import { toast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import { WifiOff, RefreshCw } from "lucide-react";
+import { WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const Index = () => {
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [alertSent, setAlertSent] = useState(false);
 
   const [filters, setFilters] = useState<FilterSettings>({
     granularity: "daily",
     groupBy: "service",
-    budget: Number(localStorage.getItem("azure-budget")) || 0,
+    budget: 0,
     startDate: "",
     endDate: "",
   });
 
-  const { data, isLoading, isError, refetch } = useCostData(
-    filters.granularity,           // daily → daily_cost table, monthly → service_cost
-    filters.startDate || undefined, // undefined = backend uses ALERT_HISTORY_DAYS/MONTHS
+  const { data, isLoading, isError } = useCostData(
+    filters.granularity,
+    filters.startDate || undefined,
     filters.endDate || undefined,
   );
 
-  useEffect(() => {
-    localStorage.setItem("azure-budget", String(filters.budget));
-  }, [filters.budget]);
+  const { data: thresholds = [] } = useQuery({
+    queryKey: ["alert-thresholds"],
+    queryFn: () => getAlertThresholds({ active_only: true }),
+    staleTime: 60_000,
+  });
 
-  const alertSettings: AlertSettings | null = useMemo(() => {
-    try {
-      const raw = localStorage.getItem("azure-alert-settings");
-      if (raw) return JSON.parse(raw) as AlertSettings;
-    } catch (_err) {
-      // localStorage unavailable or JSON malformed — return null
-    }
-    return null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
-
-  useEffect(() => {
-    if (data && filters.budget > 0 && data.total_cost > filters.budget) {
-      toast({
-        title: "⚠ Budget Exceeded",
-        description: `Total cost ₹${data.total_cost.toLocaleString(
-          "en-IN",
-        )} exceeds budget ₹${filters.budget.toLocaleString("en-IN")}`,
-        variant: "destructive",
-      });
-      if (alertSettings?.enabled && alertSettings?.email) {
-        setAlertSent(true);
-        setTimeout(() => {
-          toast({
-            title: "Alert email sent",
-            description: `Notification sent to ${alertSettings.email}`,
-          });
-        }, 500);
-      }
-    }
-  }, [data, filters.budget, alertSettings]);
-
-  const handleRefresh = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["cost-data"] });
-    refetch();
-  }, [queryClient, refetch]);
+  const totalBudget = useMemo(
+    () =>
+      thresholds
+        .filter((t) => t.period_type === filters.granularity)
+        .reduce((sum, t) => sum + (t.absolute_threshold ?? 0), 0),
+    [thresholds, filters.granularity],
+  );
 
   const handleApplyFilters = useCallback((f: FilterSettings) => {
     setFilters(f);
@@ -92,21 +63,8 @@ const Index = () => {
   return (
     <div className="min-h-full bg-background text-foreground">
       {/* Top bar */}
-      <div className="flex items-center justify-between px-6 py-4">
+      <div className="flex items-center px-6 py-4">
         <h2 className="text-lg font-semibold">Dashboard</h2>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleRefresh}
-          disabled={isLoading}
-          className="gap-1.5 transition-colors"
-        >
-          <RefreshCw
-            className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
-            strokeWidth={1.5}
-          />
-          Refresh
-        </Button>
       </div>
 
       <div className="mx-auto max-w-7xl space-y-6 px-6 pb-6">
@@ -149,12 +107,14 @@ const Index = () => {
           <>
             <StatCards
               data={data}
-              budget={filters.budget}
-              alertSent={alertSent}
+              budget={totalBudget}
+              thresholds={thresholds.filter(
+                (t) => t.period_type === filters.granularity,
+              )}
             />
             <div className="grid gap-4 lg:grid-cols-2">
               <CostBarChart records={records} />
-              <CostDonutChart records={records} budget={filters.budget} />
+              <CostDonutChart records={records} budget={totalBudget} />
             </div>
             <CostAreaChart records={records} />
             <CostTable records={records} />

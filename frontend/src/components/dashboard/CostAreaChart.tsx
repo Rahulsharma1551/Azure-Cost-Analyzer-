@@ -1,7 +1,7 @@
 import { CostRecord } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LineChart } from "@mui/x-charts/LineChart";
-import type { ShowMarkParams } from "@mui/x-charts/models"
+import type { ShowMarkParams } from "@mui/x-charts/models";
 
 function formatDateLabel(dateStr: string): string {
   const d = new Date(dateStr + "T00:00:00");

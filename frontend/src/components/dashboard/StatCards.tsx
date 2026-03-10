@@ -1,4 +1,4 @@
-import { CostResponse, AlertSettings } from "@/lib/types";
+import { CostResponse, AlertThreshold } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   IndianRupee,
@@ -7,36 +7,18 @@ import {
   CircleDollarSign,
   TrendingUp,
   TrendingDown,
-  MailCheck,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 
 interface StatCardsProps {
   data: CostResponse | undefined;
   budget: number;
-  alertSettings?: AlertSettings | null;
-  alertSent?: boolean;
+  thresholds?: AlertThreshold[];
 }
 
-function getAlertSettings(): AlertSettings | null {
-  try {
-    const raw = localStorage.getItem("azure-alert-settings");
-    if (raw) return JSON.parse(raw) as AlertSettings;
-  } catch (_err) {
-    // localStorage unavailable or JSON malformed — return null
-  }
-  return null;
-}
-
-export function StatCards({ data, budget, alertSent }: StatCardsProps) {
+export function StatCards({ data, budget, thresholds = [] }: StatCardsProps) {
   const totalCost = data?.total_cost ?? 0;
   const records = data?.data ?? [];
-  const alertSettings = getAlertSettings();
 
   const serviceMap = new Map<string, number>();
   records.forEach((r) =>
@@ -47,7 +29,22 @@ export function StatCards({ data, budget, alertSent }: StatCardsProps) {
   );
   const topService = [...serviceMap.entries()].sort((a, b) => b[1] - a[1])[0];
   const activeServices = serviceMap.size;
-  const budgetPct = budget > 0 ? Math.round((totalCost / budget) * 100) : 0;
+
+  // If exactly one budget threshold is set, compare that service's cost to its budget.
+  // Otherwise compare total cost to the sum of all budgets.
+  const { budgetPct, budgetLabel } = (() => {
+    if (budget === 0) return { budgetPct: 0, budgetLabel: "Not set" };
+    if (thresholds.length === 1) {
+      const t = thresholds[0];
+      const svcCost = serviceMap.get(t.service_name) ?? 0;
+      const svcBudget = t.absolute_threshold ?? 0;
+      if (svcBudget === 0) return { budgetPct: 0, budgetLabel: "Not set" };
+      const pct = Math.round((svcCost / svcBudget) * 100);
+      return { budgetPct: pct, budgetLabel: `${pct}% (${t.service_name})` };
+    }
+    const pct = Math.round((totalCost / budget) * 100);
+    return { budgetPct: pct, budgetLabel: `${pct}%` };
+  })();
 
   // Split records into two equal halves by date, compare totals to get real % change
   const pctChange = (() => {
@@ -67,36 +64,6 @@ export function StatCards({ data, budget, alertSent }: StatCardsProps) {
       : budgetPct > 80
         ? "bg-warning"
         : "bg-primary";
-
-  const alertsActive = alertSettings?.enabled && alertSettings?.email;
-
-  const budgetBadge = (
-    <span className="inline-flex items-center gap-1">
-      {alertsActive && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-xs">
-            Email alerts active
-          </TooltipContent>
-        </Tooltip>
-      )}
-      {alertSent && budgetPct > 100 && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <MailCheck className="h-3.5 w-3.5 text-primary" strokeWidth={1.5} />
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-xs">
-            Alert email sent
-          </TooltipContent>
-        </Tooltip>
-      )}
-    </span>
-  );
 
   const stats = [
     {
@@ -143,10 +110,10 @@ export function StatCards({ data, budget, alertSent }: StatCardsProps) {
     },
     {
       label: "Budget Used",
-      value: budget > 0 ? `${budgetPct}%` : "Not set",
+      value: budget > 0 ? budgetLabel : "Not set",
       icon: CircleDollarSign,
       iconBg: "bg-warning/15 text-warning",
-      badge: budgetBadge,
+      badge: null,
       extra:
         budget > 0 ? (
           <div className="mt-1.5 w-full">

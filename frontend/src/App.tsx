@@ -6,7 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import Index from "./pages/Index";
-import Settings from "./pages/Settings";
+import Budget from "./pages/Budget";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -28,7 +28,7 @@ const App = () => (
                 <main className="flex-1 bg-background">
                   <Routes>
                     <Route path="/" element={<Index />} />
-                    <Route path="/settings" element={<Settings />} />
+                    <Route path="/budget" element={<Budget />} />
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </main>

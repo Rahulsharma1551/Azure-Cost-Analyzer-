@@ -122,6 +122,8 @@ class AnomalySettingsRead(BaseModel):
     alert_history_days: int
     alert_history_months: int
     updated_at: datetime
+    receiver_email: str | None
+    email_enabled: bool
 
 
 class AnomalySettingsUpdate(BaseModel):
@@ -148,6 +150,14 @@ class AnomalySettingsUpdate(BaseModel):
         default=None,
         gt=0,
         description="Number of past billing periods used for monthly statistics",
+    )
+    receiver_email: str | None = Field(
+        default=None,
+        description="Recipient email address for alert notifications.",
+    )
+    email_enabled: bool | None = Field(
+        default=None,
+        description="Whether email notifications are enabled.",
     )
 
 

@@ -1,7 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { format, subDays, startOfMonth } from "date-fns";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -26,13 +24,10 @@ interface ControlPanelProps {
 }
 
 export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
-  const navigate = useNavigate();
-
   const [granularity, setGranularity] = useState<Granularity>(
     filters.granularity,
   );
   const [groupBy, setGroupBy] = useState<GroupBy>(filters.groupBy);
-  const [budget, setBudget] = useState(filters.budget);
   const [startDate, setStartDate] = useState<Date | undefined>(
     filters.startDate ? new Date(filters.startDate) : undefined,
   );
@@ -44,7 +39,6 @@ export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
   const handleReset = () => {
     setGranularity("daily");
     setGroupBy("service");
-    setBudget(0);
     setStartDate(undefined);
     setEndDate(undefined);
     setQuickRange("");
@@ -61,7 +55,7 @@ export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
     onApplyFilters({
       granularity,
       groupBy,
-      budget,
+      budget: 0,
       startDate: startDate ? format(startDate, "yyyy-MM-dd") : "",
       endDate: endDate ? format(endDate, "yyyy-MM-dd") : "",
     });
@@ -69,7 +63,7 @@ export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
 
   return (
     <div className="rounded-lg border border-border bg-card p-4">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-7 items-end">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6 items-end">
         {/* Quick Range */}
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-muted-foreground">
@@ -91,7 +85,7 @@ export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
                 onApplyFilters({
                   granularity,
                   groupBy,
-                  budget,
+                  budget: 0,
                   startDate: format(s, "yyyy-MM-dd"),
                   endDate: format(e, "yyyy-MM-dd"),
                 });
@@ -172,7 +166,10 @@ export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
               <Calendar
                 mode="single"
                 selected={startDate}
-                onSelect={(d) => { setStartDate(d); setQuickRange(""); }}
+                onSelect={(d) => {
+                  setStartDate(d);
+                  setQuickRange("");
+                }}
                 initialFocus
                 className="p-3 pointer-events-auto"
               />
@@ -205,32 +202,15 @@ export function ControlPanel({ filters, onApplyFilters }: ControlPanelProps) {
               <Calendar
                 mode="single"
                 selected={endDate}
-                onSelect={(d) => { setEndDate(d); setQuickRange(""); }}
+                onSelect={(d) => {
+                  setEndDate(d);
+                  setQuickRange("");
+                }}
                 initialFocus
                 className="p-3 pointer-events-auto"
               />
             </PopoverContent>
           </Popover>
-        </div>
-
-        {/* Budget */}
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-muted-foreground">
-            Budget (INR)
-          </label>
-          <Input
-            type="number"
-            placeholder="10000"
-            value={budget || ""}
-            onChange={(e) => setBudget(Number(e.target.value))}
-            className="h-9 text-xs"
-          />
-          <button
-            onClick={() => navigate("/settings")}
-            className="mt-1 text-[10px] text-primary hover:underline cursor-pointer text-left"
-          >
-            Configure Alerts →
-          </button>
         </div>
 
         {/* Apply & Reset */}

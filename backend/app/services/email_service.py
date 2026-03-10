@@ -261,9 +261,9 @@ def _build_email_plain(events: list[AlertEvent]) -> str:
     return "\n".join(lines)
 
 
-def _send_alert_email_sync(events: list[AlertEvent]) -> None:
+def _send_alert_email_sync(events: list[AlertEvent], recipient: str) -> None:
     """Synchronous email sender — called via run_in_executor to avoid blocking."""
-    if not events:
+    if not events or not recipient:
         return
 
     email_from: str = settings.ALERT_EMAIL_FROM or ""
@@ -277,7 +277,7 @@ def _send_alert_email_sync(events: list[AlertEvent]) -> None:
         f"[Azure Cost Analyzer] ⚠️ {count} cost threshold breach{'es' if count > 1 else ''}"
     )
     msg["From"] = email_from
-    msg["To"] = ", ".join(settings.alert_email_recipients)
+    msg["To"] = recipient
 
     # Plain text first, HTML second — email clients prefer the last part
     msg.attach(MIMEText(_build_email_plain(events), "plain"))
@@ -287,11 +287,9 @@ def _send_alert_email_sync(events: list[AlertEvent]) -> None:
         smtp.ehlo()
         smtp.starttls()
         smtp.login(smtp_user, smtp_password)
-        smtp.sendmail(email_from, settings.alert_email_recipients, msg.as_string())
+        smtp.sendmail(email_from, [recipient], msg.as_string())
 
-    logger.info(
-        f"Alert email sent to {settings.alert_email_recipients} for {count} event(s)."
-    )
+    logger.info(f"Alert email sent to {recipient} for {count} event(s).")
 
 
 def shutdown_email_executor() -> None:

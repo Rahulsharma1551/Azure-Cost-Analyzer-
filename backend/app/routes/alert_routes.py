@@ -76,6 +76,33 @@ async def _enrich_event(event, session: AsyncSession) -> AlertEventRead:
     )
 
 
+# Services endpoint (used by the frontend threshold creation form)
+
+
+@router.get("/services", summary="List all Azure services")
+async def list_azure_services(
+    session: AsyncSession = Depends(get_session),
+):
+    """Return the id, name, and category of every tracked Azure service.
+    Used by the frontend to populate the service selector when creating thresholds."""
+    from sqlmodel import select as _select
+
+    result = await session.exec(_select(AzureService).order_by(AzureService.name))
+    services = result.all()
+    return {
+        "status": "success",
+        "count": len(services),
+        "data": [
+            {
+                "id": s.id,
+                "name": s.name,
+                "service_category": s.service_category,
+            }
+            for s in services
+        ],
+    }
+
+
 # Threshold endpoints
 
 

@@ -426,3 +426,13 @@ class AnomalySettings(SQLModel, table=True):
     updated_at: datetime = Field(
         default_factory=_utcnow, sa_column_kwargs={"onupdate": _utcnow}
     )
+    receiver_email: str | None = Field(
+        default=None,
+        sa_column=Column(String(255), nullable=True),
+        description="Recipient email address for alert notifications (configured from UI).",
+    )
+    email_enabled: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, default=False),
+        description="Whether email notifications are enabled (toggleable from UI).",
+    )

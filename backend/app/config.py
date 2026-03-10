@@ -139,10 +139,6 @@ class Settings(BaseSettings):
         default=None,
         description="Sender email address for alert notifications",
     )
-    ALERT_EMAIL_TO: EmailStr = Field(
-        default_factory="",
-        description="Recipient email addresses (comma-separated in .env)",
-    )
     SMTP_HOST: str | None = Field(default=None, description="SMTP server hostname")
     SMTP_PORT: int = Field(default=587, description="SMTP server port")
     SMTP_USER: str | None = Field(default=None, description="SMTP authentication user")
@@ -180,10 +176,6 @@ class Settings(BaseSettings):
         """Get DATABASE_URL as string for SQLAlchemy."""
         return str(self.DATABASE_URL)
 
-    @property
-    def alert_email_recipients(self) -> list[str]:
-        return [e.strip() for e in self.ALERT_EMAIL_TO.split(",") if e.strip()]
-
     @model_validator(mode="after")
     def validate_minutes(self):
         if (
@@ -216,10 +208,6 @@ class Settings(BaseSettings):
             if missing:
                 raise ValueError(
                     f"ALERT_EMAIL_ENABLED=true requires these fields to be set: {', '.join(missing)}"
-                )
-            if not self.alert_email_recipients:
-                raise ValueError(
-                    "ALERT_EMAIL_ENABLED=true requires ALERT_EMAIL_TO to contain at least one recipient."
                 )
 
         return self

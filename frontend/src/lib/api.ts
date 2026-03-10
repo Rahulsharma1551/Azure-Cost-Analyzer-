@@ -1,10 +1,22 @@
-import { CostResponse, AlertSettings } from "./types";
+import {
+  CostResponse,
+  AnomalySettings,
+  AlertEvent,
+  AnomalyLogEntry,
+  AlertThreshold,
+  AzureService,
+} from "./types";
 import { config } from "./config";
 
 const base = () => config.apiUrl;
 
 const defaultHeaders: HeadersInit = {
   "ngrok-skip-browser-warning": "true",
+};
+
+const jsonHeaders: HeadersInit = {
+  ...defaultHeaders,
+  "Content-Type": "application/json",
 };
 
 export async function fetchCostFromDb(
@@ -64,27 +76,182 @@ export async function testConnection(): Promise<boolean> {
   }
 }
 
-export async function saveAlertSettings(
-  settings: AlertSettings,
-): Promise<void> {
-  const res = await fetch(`${base()}/alerts/configure`, {
-    method: "POST",
-    headers: { ...defaultHeaders, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      email: settings.email,
-      budget_threshold: settings.budgetThreshold,
-      trigger: settings.trigger,
-      enabled: settings.enabled,
-    }),
+// ── Alert Settings ────────────────────────────────────────────
+
+export async function getAlertSettings(): Promise<AnomalySettings> {
+  const res = await fetch(`${base()}/alerts/settings`, {
+    headers: defaultHeaders,
   });
-  if (!res.ok) throw new Error(`Failed to save alert settings: ${res.status}`);
+  if (!res.ok) throw new Error(`Failed to fetch alert settings: ${res.status}`);
+  const json = (await res.json()) as { data: AnomalySettings };
+  return json.data;
 }
 
-export async function sendTestAlert(email: string): Promise<void> {
-  const res = await fetch(`${base()}/alerts/test`, {
-    method: "POST",
-    headers: { ...defaultHeaders, "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+export async function updateAlertSettings(
+  patch: Partial<
+    Pick<
+      AnomalySettings,
+      | "k_value"
+      | "percentage_buffer"
+      | "alert_history_days"
+      | "alert_history_months"
+      | "receiver_email"
+      | "email_enabled"
+    >
+  >,
+): Promise<AnomalySettings> {
+  const res = await fetch(`${base()}/alerts/settings`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify(patch),
   });
-  if (!res.ok) throw new Error(`Failed to send test alert: ${res.status}`);
+  if (!res.ok)
+    throw new Error(`Failed to update alert settings: ${res.status}`);
+  const json = (await res.json()) as { data: AnomalySettings };
+  return json.data;
+}
+
+// ── Services ──────────────────────────────────────────────────
+
+export async function getAlertServices(): Promise<AzureService[]> {
+  const res = await fetch(`${base()}/alerts/services`, {
+    headers: defaultHeaders,
+  });
+  if (!res.ok) throw new Error(`Failed to fetch services: ${res.status}`);
+  const json = (await res.json()) as { data: AzureService[] };
+  return json.data;
+}
+
+// ── Thresholds ────────────────────────────────────────────────
+
+export async function getAlertThresholds(params?: {
+  service_id?: number;
+  period_type?: string;
+  active_only?: boolean;
+}): Promise<AlertThreshold[]> {
+  const url = new URL(`${base()}/alerts/thresholds`);
+  if (params?.service_id != null)
+    url.searchParams.set("service_id", String(params.service_id));
+  if (params?.period_type)
+    url.searchParams.set("period_type", params.period_type);
+  if (params?.active_only != null)
+    url.searchParams.set("active_only", String(params.active_only));
+  const res = await fetch(url.toString(), { headers: defaultHeaders });
+  if (!res.ok) throw new Error(`Failed to fetch thresholds: ${res.status}`);
+  const json = (await res.json()) as { data: AlertThreshold[] };
+  return json.data;
+}
+
+export async function createAlertThreshold(payload: {
+  service_id: number;
+  period_type: string;
+  absolute_threshold?: number | null;
+}): Promise<AlertThreshold> {
+  const res = await fetch(`${base()}/alerts/thresholds`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`Failed to create threshold: ${res.status}`);
+  const json = (await res.json()) as { data: AlertThreshold };
+  return json.data;
+}
+
+export async function updateAlertThreshold(
+  id: number,
+  patch: { absolute_threshold?: number | null; is_active?: boolean },
+): Promise<AlertThreshold> {
+  const res = await fetch(`${base()}/alerts/thresholds/${id}`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`Failed to update threshold: ${res.status}`);
+  const json = (await res.json()) as { data: AlertThreshold };
+  return json.data;
+}
+
+export async function deactivateAlertThreshold(
+  id: number,
+): Promise<AlertThreshold> {
+  const res = await fetch(`${base()}/alerts/thresholds/${id}`, {
+    method: "DELETE",
+    headers: defaultHeaders,
+  });
+  if (!res.ok) throw new Error(`Failed to deactivate threshold: ${res.status}`);
+  const json = (await res.json()) as { data: AlertThreshold };
+  return json.data;
+}
+
+export async function evaluateAlerts(
+  periodType: "daily" | "monthly",
+): Promise<void> {
+  const url = new URL(`${base()}/alerts/evaluate`);
+  url.searchParams.set("period_type", periodType);
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: defaultHeaders,
+  });
+  if (!res.ok) throw new Error(`Alert evaluation failed: ${res.status}`);
+}
+
+// ── Alert Events ──────────────────────────────────────────────
+
+export async function getAlertEvents(params?: {
+  status?: string;
+  service_id?: number;
+  period_type?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<AlertEvent[]> {
+  const url = new URL(`${base()}/alerts/events`);
+  if (params?.status) url.searchParams.set("status", params.status);
+  if (params?.service_id != null)
+    url.searchParams.set("service_id", String(params.service_id));
+  if (params?.period_type)
+    url.searchParams.set("period_type", params.period_type);
+  if (params?.limit != null)
+    url.searchParams.set("limit", String(params.limit));
+  if (params?.offset != null)
+    url.searchParams.set("offset", String(params.offset));
+  const res = await fetch(url.toString(), { headers: defaultHeaders });
+  if (!res.ok) throw new Error(`Failed to fetch alert events: ${res.status}`);
+  const json = (await res.json()) as { data: AlertEvent[] };
+  return json.data;
+}
+
+export async function acknowledgeAlertEvent(id: number): Promise<AlertEvent> {
+  const res = await fetch(`${base()}/alerts/events/${id}/acknowledge`, {
+    method: "POST",
+    headers: defaultHeaders,
+  });
+  if (!res.ok) throw new Error(`Failed to acknowledge alert: ${res.status}`);
+  const json = (await res.json()) as { data: AlertEvent };
+  return json.data;
+}
+
+// ── Anomaly Logs ──────────────────────────────────────────────
+
+export async function getAnomalyLogs(params?: {
+  service_id?: number;
+  period_type?: string;
+  is_alert_fired?: boolean;
+  limit?: number;
+  offset?: number;
+}): Promise<AnomalyLogEntry[]> {
+  const url = new URL(`${base()}/alerts/anomaly-logs`);
+  if (params?.service_id != null)
+    url.searchParams.set("service_id", String(params.service_id));
+  if (params?.period_type)
+    url.searchParams.set("period_type", params.period_type);
+  if (params?.is_alert_fired != null)
+    url.searchParams.set("is_alert_fired", String(params.is_alert_fired));
+  if (params?.limit != null)
+    url.searchParams.set("limit", String(params.limit));
+  if (params?.offset != null)
+    url.searchParams.set("offset", String(params.offset));
+  const res = await fetch(url.toString(), { headers: defaultHeaders });
+  if (!res.ok) throw new Error(`Failed to fetch anomaly logs: ${res.status}`);
+  const json = (await res.json()) as { data: AnomalyLogEntry[] };
+  return json.data;
 }

@@ -4,7 +4,6 @@ import {
   TrendingUp,
   Target,
   FileText,
-  Settings,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
@@ -27,9 +26,8 @@ import {
 const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Cost Analysis", url: "/cost-analysis", icon: TrendingUp },
-  { title: "Budget", url: "/budget", icon: Target },
+  { title: "Budget Alerts", url: "/budget", icon: Target },
   { title: "Reports", url: "/reports", icon: FileText },
-  { title: "Settings", url: "/settings", icon: Settings },
 ];
 
 export function AppSidebar() {

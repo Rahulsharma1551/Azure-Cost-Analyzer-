@@ -389,12 +389,19 @@ async def evaluate_thresholds(
             skipped_no_cost += 1
 
     #  Email notification
-    if new_alert_events and settings.ALERT_EMAIL_ENABLED:
+    receiver = anomaly_cfg.receiver_email
+    if (
+        new_alert_events
+        and settings.ALERT_EMAIL_ENABLED
+        and anomaly_cfg.email_enabled
+        and receiver
+    ):
         try:
             await asyncio.get_running_loop().run_in_executor(
                 _email_executor,
                 _send_alert_email_sync,
                 new_alert_events,
+                receiver,
             )
         except Exception as exc:
             err_detail = f": {exc}" if settings.show_debug_info else "."
