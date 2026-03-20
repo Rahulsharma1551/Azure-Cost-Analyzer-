@@ -861,12 +861,19 @@ export default function Budget() {
                         <Badge variant="destructive" className="text-xs">
                           open
                         </Badge>
-                      ) : (
+                      ) : event.status === "resolved" ? (
                         <Badge
                           variant="secondary"
                           className="text-xs bg-emerald-100 text-emerald-700"
                         >
                           resolved
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="secondary"
+                          className="text-xs bg-slate-100 text-slate-500"
+                        >
+                          deactivated
                         </Badge>
                       )}
                     </TableCell>

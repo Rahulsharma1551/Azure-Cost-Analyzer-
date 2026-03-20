@@ -56,7 +56,7 @@ export interface AlertEvent {
   statistical_component: number | null;
   percentage_component: number | null;
   winning_component: string;
-  status: "open" | "resolved";
+  status: "open" | "resolved" | "deactivated";
   breach_started_at: string;
   breach_resolved_at: string | null;
   last_notified_at: string;
