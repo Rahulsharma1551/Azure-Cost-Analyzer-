@@ -22,14 +22,6 @@ class AlertThresholdCreate(BaseModel):
         ge=0,
         description="Hard budget ceiling in the service's currency. Null = not configured.",
     )
-    cooldown_minutes: int | None = Field(
-        default=None,
-        gt=0,
-        description=(
-            "Per-threshold cooldown override (minutes). "
-            "If null, the global setting is used."
-        ),
-    )
 
     @field_validator("absolute_threshold", mode="before")
     @classmethod
@@ -52,11 +44,6 @@ class AlertThresholdUpdate(BaseModel):
     is_active: bool | None = Field(
         default=None, description="Enable or disable the threshold."
     )
-    cooldown_minutes: int | None = Field(
-        default=None,
-        gt=0,
-        description="Per-threshold cooldown override (minutes). Pass null to use global.",
-    )
 
     @field_validator("absolute_threshold", mode="before")
     @classmethod
@@ -76,7 +63,6 @@ class AlertThresholdRead(BaseModel):
     service_name: str
     period_type: PeriodType
     absolute_threshold: Decimal | None
-    cooldown_minutes: int | None
     is_active: bool
     created_at: datetime
     updated_at: datetime

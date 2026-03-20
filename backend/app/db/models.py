@@ -298,14 +298,6 @@ class AlertThreshold(SQLModel, table=True):
         sa_column=Column(DECIMAL(15, 2), nullable=True),
         description="Hard budget ceiling (business rule). Null = not configured.",
     )
-    cooldown_minutes: int | None = Field(
-        default=None,
-        sa_column=Column(Integer, nullable=True),
-        description=(
-            "Per-threshold cooldown override in minutes. "
-            "If null, falls back to AnomalySettings.cooldown_minutes."
-        ),
-    )
     is_active: bool = Field(default=True, sa_column=Column(Boolean, default=True))
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True)), default_factory=_utcnow

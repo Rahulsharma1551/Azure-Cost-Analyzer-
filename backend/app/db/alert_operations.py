@@ -87,8 +87,6 @@ async def update_threshold(
         threshold.absolute_threshold = payload.absolute_threshold
     if payload.is_active is not None:
         threshold.is_active = payload.is_active
-    if "cooldown_minutes" in payload.model_fields_set:
-        threshold.cooldown_minutes = payload.cooldown_minutes
     threshold.updated_at = datetime.now(timezone.utc)
 
     session.add(threshold)

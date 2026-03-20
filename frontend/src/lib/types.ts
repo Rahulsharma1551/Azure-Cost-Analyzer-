@@ -38,7 +38,6 @@ export interface AlertThreshold {
   service_name: string;
   period_type: PeriodType;
   absolute_threshold: number | null;
-  cooldown_minutes: number | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;

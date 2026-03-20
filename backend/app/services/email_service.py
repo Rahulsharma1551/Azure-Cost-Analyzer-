@@ -42,7 +42,7 @@ def _build_email_html(events: list[AlertEvent]) -> str:
                 <span style="display:inline-block;background:{"#fff"};border:{border};
                              color:{color};border-radius:4px;padding:2px 8px;
                              font-size:11px;font-weight:{weight}">
-                    ${value:,.2f}
+                    ₹{value:,.2f}
                 </span>
             </td>"""
 
@@ -75,9 +75,9 @@ def _build_email_html(events: list[AlertEvent]) -> str:
             <td style="padding:12px 12px 4px;text-align:center">{e.period_type.value.capitalize()}</td>
             <td style="padding:12px 12px 4px;text-align:center">{e.reference_date}</td>
             <td style="padding:12px 12px 4px;text-align:right;color:#dc2626;font-weight:600">
-                ${float(e.current_cost):,.2f}
+                ₹{float(e.current_cost):,.2f}
             </td>
-            <td style="padding:12px 12px 4px;text-align:right">${float(e.computed_threshold):,.2f}</td>
+            <td style="padding:12px 12px 4px;text-align:right">₹{float(e.computed_threshold):,.2f}</td>
             <td style="padding:12px 12px 4px;text-align:center">
                 <span style="background:{badge_color};color:#fff;padding:2px 8px;
                              border-radius:4px;font-size:12px;font-weight:600">
@@ -251,7 +251,7 @@ def _build_email_plain(events: list[AlertEvent]) -> str:
             service_name = f"service_id={e.service_id}"
         lines.append(
             f"{service_name:<28} {e.period_type.value:<8} {str(e.reference_date):<12} "
-            f"${float(e.current_cost):>9.2f} ${float(e.computed_threshold):>9.2f} "
+            f"₹{float(e.current_cost):>9.2f} ₹{float(e.computed_threshold):>9.2f} "
             f"{e.winning_component:<12}"
         )
     lines += [

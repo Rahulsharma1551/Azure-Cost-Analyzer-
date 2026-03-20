@@ -38,7 +38,7 @@ import {
   Mail,
   AlertTriangle,
   Loader2,
-  DollarSign,
+  IndianRupeeIcon,
   Target,
   Settings2,
   History,
@@ -70,9 +70,9 @@ import {
 import { toast } from "@/hooks/use-toast";
 
 const formatCurrency = (v: number) =>
-  new Intl.NumberFormat("en-US", {
+  new Intl.NumberFormat("en-IN", {
     style: "currency",
-    currency: "USD",
+    currency: "INR",
     minimumFractionDigits: 2,
   }).format(v);
 
@@ -157,7 +157,6 @@ export default function Budget() {
   const [selectedPeriodType, setSelectedPeriodType] =
     useState<PeriodType>("monthly");
   const [absoluteThreshold, setAbsoluteThreshold] = useState<string>("");
-  const [thresholdCooldown, setThresholdCooldown] = useState<string>("");
   const [savingThreshold, setSavingThreshold] = useState(false);
 
   const [receiverEmail, setReceiverEmail] = useState("");
@@ -204,17 +203,6 @@ export default function Budget() {
       });
       return;
     }
-    const cooldown = thresholdCooldown
-      ? parseInt(thresholdCooldown)
-      : undefined;
-    if (cooldown !== undefined && (isNaN(cooldown) || cooldown <= 0)) {
-      toast({
-        title: "Invalid cooldown",
-        description: "Cooldown must be a positive number of minutes.",
-        variant: "destructive",
-      });
-      return;
-    }
 
     setSavingThreshold(true);
     try {
@@ -226,7 +214,6 @@ export default function Budget() {
         await updateAlertThreshold(existing.id, {
           absolute_threshold: amount,
           is_active: true,
-          cooldown_minutes: cooldown ?? null,
         });
         toast({
           title: "✓ Threshold updated",
@@ -237,7 +224,6 @@ export default function Budget() {
           service_id: svcId,
           period_type: selectedPeriodType,
           absolute_threshold: amount,
-          cooldown_minutes: cooldown ?? null,
         });
         const svcName =
           services.find((s) => s.id === svcId)?.name ?? `service #${svcId}`;
@@ -255,7 +241,6 @@ export default function Budget() {
         // non-fatal
       }
       setAbsoluteThreshold("");
-      setThresholdCooldown("");
     } catch (err) {
       toast({
         title: "Failed to save threshold",
@@ -439,7 +424,7 @@ export default function Budget() {
                     Budget Amount
                   </Label>
                   <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <IndianRupeeIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="budget-amount"
                       type="number"
@@ -453,28 +438,6 @@ export default function Budget() {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="threshold-cooldown" className="text-sm">
-                  Cooldown Override
-                  <span className="ml-1 text-xs text-muted-foreground">
-                    minutes · leave blank to use global (
-                    {alertSettings?.cooldown_minutes ?? 120}m)
-                  </span>
-                </Label>
-                <div className="relative">
-                  <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    id="threshold-cooldown"
-                    type="number"
-                    min={1}
-                    placeholder={`e.g. ${alertSettings?.cooldown_minutes ?? 120}`}
-                    value={thresholdCooldown}
-                    onChange={(e) => setThresholdCooldown(e.target.value)}
-                    className="pl-8"
-                  />
-                </div>
-              </div>
-
               <Button
                 onClick={handleCreateThreshold}
                 disabled={savingThreshold}
@@ -483,7 +446,7 @@ export default function Budget() {
                 {savingThreshold && (
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
                 )}
-                Create / Update Alert
+                Create Alert
               </Button>
 
               {thresholds.length > 0 && (
@@ -511,12 +474,6 @@ export default function Budget() {
                               ? formatCurrency(t.absolute_threshold)
                               : "—"}
                           </span>
-                          {t.cooldown_minutes != null && (
-                            <span className="text-xs text-muted-foreground flex items-center gap-0.5">
-                              <Clock className="h-3 w-3" />
-                              {t.cooldown_minutes}m
-                            </span>
-                          )}
                           <Badge
                             variant={t.is_active ? "default" : "secondary"}
                             className="text-xs"

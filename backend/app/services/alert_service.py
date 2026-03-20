@@ -330,7 +330,7 @@ async def evaluate_thresholds(
             # Breach
             if existing is None:
                 # Fresh breach — open new incident
-                effective_cooldown = threshold.cooldown_minutes or global_cooldown
+                effective_cooldown = global_cooldown
                 logger.warning(
                     f"NEW BREACH — service_id={service_id} period={period_type.value} "
                     f"cost={current_cost} > threshold={computed_threshold} "

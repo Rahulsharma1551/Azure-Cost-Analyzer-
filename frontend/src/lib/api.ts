@@ -139,7 +139,6 @@ export async function createAlertThreshold(payload: {
   service_id: number;
   period_type: string;
   absolute_threshold?: number | null;
-  cooldown_minutes?: number | null;
 }): Promise<AlertThreshold> {
   const res = await fetch(`${base()}/alerts/thresholds`, {
     method: "POST",
@@ -156,7 +155,6 @@ export async function updateAlertThreshold(
   patch: {
     absolute_threshold?: number | null;
     is_active?: boolean;
-    cooldown_minutes?: number | null;
   },
 ): Promise<AlertThreshold> {
   const res = await fetch(`${base()}/alerts/thresholds/${id}`, {

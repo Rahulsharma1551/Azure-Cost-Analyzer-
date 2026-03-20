@@ -41,7 +41,6 @@ async def _enrich_threshold(threshold, session: AsyncSession) -> AlertThresholdR
         service_name=service_name,
         period_type=threshold.period_type,
         absolute_threshold=threshold.absolute_threshold,
-        cooldown_minutes=threshold.cooldown_minutes,
         is_active=threshold.is_active,
         created_at=threshold.created_at,
         updated_at=threshold.updated_at,
