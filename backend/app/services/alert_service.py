@@ -1,10 +1,8 @@
-"""Alert evaluation engine and email notification service."""
+"""Alert evaluation engine — incident-based with cooldown-controlled notifications."""
 
 import asyncio
-
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-
 from math import isfinite, sqrt
 
 from loguru import logger
@@ -13,12 +11,16 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from config import settings
 from db.alert_operations import (
-    create_alert_event,
     create_anomaly_log,
     get_anomaly_settings,
     get_daily_cost_history,
     get_monthly_cost_history,
-    get_open_alert,
+    get_open_incident,
+    is_cooldown_elapsed,
+    open_incident,
+    record_notification,
+    resolve_incident,
+    update_incident_cost,
     get_thresholds,
 )
 from db.models import (
@@ -31,21 +33,19 @@ from db.models import (
 )
 from exceptions.cost_exceptions import AlertError
 from models.alert_models import AlertEvaluationSummary, AlertEventRead
-from services.email_service import _send_alert_email_sync, _email_executor
+from services.email_service import _email_executor, _send_alert_email_sync
 
 
-# Statistical helpers
+#  Statistical helpers
 
 
 def _mean(values: list[Decimal]) -> float:
-    """Return arithmetic mean as float, or 0.0 for an empty list."""
     if not values:
         return 0.0
     return float(sum(values)) / len(values)
 
 
 def _std(values: list[Decimal], mean: float) -> float:
-    """Return population std-dev as float. Returns 0.0 if fewer than 2 values."""
     if len(values) < 2:
         return 0.0
     variance = sum((float(v) - mean) ** 2 for v in values) / len(values)
@@ -53,15 +53,13 @@ def _std(values: list[Decimal], mean: float) -> float:
 
 
 def _to_decimal2(value: float) -> Decimal:
-    """Round a float to a Decimal with 2 decimal places."""
     return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-# Core evaluation logic
+#  Cost fetching helpers
 
 
 async def _get_current_billing_period_id(session: AsyncSession) -> int | None:
-    """Return the id of the billing period marked is_current=True, or None."""
     try:
         result = await session.exec(
             select(BillingPeriod)
@@ -87,7 +85,6 @@ async def _get_current_billing_period_id(session: AsyncSession) -> int | None:
 async def _get_latest_daily_cost(
     session: AsyncSession, service_id: int
 ) -> tuple[date, Decimal] | None:
-    """Return (usage_date, cost_amount) of the most recent DailyCost row, or None."""
     try:
         result = await session.exec(
             select(DailyCost)
@@ -115,7 +112,6 @@ async def _get_latest_daily_cost(
 async def _get_current_monthly_cost(
     session: AsyncSession, service_id: int, billing_period_id: int
 ) -> Decimal | None:
-    """Return the MTD ServiceCost for the current billing period, or None."""
     try:
         result = await session.exec(
             select(ServiceCost).where(
@@ -126,7 +122,7 @@ async def _get_current_monthly_cost(
         row = result.first()
         return row.cost_amount if row else None
     except Exception as exc:
-        msg = f"Failed to query monthly cost for service_id={service_id} billing_period_id={billing_period_id}: {exc}"
+        msg = f"Failed to query monthly cost for service_id={service_id}: {exc}"
         logger.error(
             msg
             if settings.show_debug_info
@@ -137,26 +133,22 @@ async def _get_current_monthly_cost(
         ) from exc
 
 
+# Threshold computation
+
+
 def _compute_components(
     history: list[Decimal],
     absolute_threshold: Decimal | None,
     k: float,
     pct_buffer: float,
 ) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
-    """Return (absolute_component, statistical_component, percentage_component).
-    Statistical and percentage components are None when history is too short (<2 points).
-    """
-    absolute_component = absolute_threshold  # may be None
-
+    absolute_component = absolute_threshold
     if len(history) < 2:
         return absolute_component, None, None
-
     mu = _mean(history)
     sigma = _std(history, mu)
-
     statistical_component = _to_decimal2(mu + k * sigma)
     percentage_component = _to_decimal2(mu * pct_buffer)
-
     return absolute_component, statistical_component, percentage_component
 
 
@@ -165,8 +157,6 @@ def _effective_threshold(
     statistical_component: Decimal | None,
     percentage_component: Decimal | None,
 ) -> tuple[Decimal, str] | None:
-    """Return (effective_threshold, winning_component_name) as the maximum of non-None
-    components, or None if every component is None (nothing to evaluate against)."""
     candidates: dict[str, Decimal] = {}
     if absolute_component is not None:
         candidates["absolute"] = absolute_component
@@ -174,15 +164,10 @@ def _effective_threshold(
         candidates["statistical"] = statistical_component
     if percentage_component is not None:
         candidates["percentage"] = percentage_component
-
     if not candidates:
         return None
-
     winner = max(candidates, key=lambda k: candidates[k])
     return candidates[winner], winner
-
-
-# Public evaluation function
 
 
 async def evaluate_thresholds(
@@ -192,29 +177,36 @@ async def evaluate_thresholds(
     """Evaluate all active thresholds for the given period type.
 
     For each threshold:
-      1. Fetch current cost (latest daily cost OR current-period monthly cost).
-      2. Fetch rolling historical cost values.
-      3. Compute the three threshold components.
-      4. effective = max(components that are not None).
-      5. Skip if an open alert already exists for (service_id, period_type).
-      6. If current_cost > effective → create AlertEvent and optionally send email.
+      1. Fetch current cost.
+      2. Compute effective threshold from history.
+      3a. No breach + open incident → resolve incident.
+      3b. Breach + no open incident → open new incident + send email.
+      3c. Breach + open incident → update cost fields on incident.
+              If cooldown elapsed → send reminder email.
+              If cooldown not elapsed → skip email silently.
+      4. Write anomaly_log entry for every evaluation.
 
-    Returns an AlertEvaluationSummary describing what happened.
+    Returns AlertEvaluationSummary.
     """
     anomaly_cfg = await get_anomaly_settings(session)
     k = anomaly_cfg.k_value
     pct_buffer = anomaly_cfg.percentage_buffer
+    global_cooldown = anomaly_cfg.cooldown_minutes
 
     thresholds = await get_thresholds(
         session, period_type=period_type, active_only=True
     )
-    evaluated = 0
-    breaches = 0
-    skipped_no_cost = 0
-    skipped_open_alert = 0
-    new_alert_events: list[AlertEvent] = []
 
-    # For monthly evaluation we need the current billing period id once
+    evaluated = 0
+    new_incidents = 0
+    ongoing_incidents = 0
+    resolved_incidents = 0
+    notifications_sent = 0
+    skipped_no_cost = 0
+    skipped_cooldown = 0
+    newly_opened: list[AlertEvent] = []
+    reminder_events: list[AlertEvent] = []
+
     current_bp_id: int | None = None
     if period_type == PeriodType.MONTHLY:
         current_bp_id = await _get_current_billing_period_id(session)
@@ -224,9 +216,12 @@ async def evaluate_thresholds(
             )
             return AlertEvaluationSummary(
                 evaluated=0,
-                breaches=0,
+                new_incidents=0,
+                ongoing_incidents=0,
+                resolved_incidents=0,
+                notifications_sent=0,
                 skipped_no_cost=len(thresholds),
-                skipped_open_alert=0,
+                skipped_cooldown=0,
                 new_alerts=[],
             )
 
@@ -240,24 +235,22 @@ async def evaluate_thresholds(
                 daily_result = await _get_latest_daily_cost(session, service_id)
                 if daily_result is None:
                     logger.debug(
-                        f"evaluate_thresholds: no daily cost data for service_id={service_id}, skipping."
+                        f"No daily cost data for service_id={service_id}, skipping."
                     )
                     skipped_no_cost += 1
                     continue
                 ref_date, current_cost = daily_result
             else:
-                # current_bp_id is guaranteed non-None here: the early return above guards it
                 assert current_bp_id is not None
                 current_cost = await _get_current_monthly_cost(
                     session, service_id, current_bp_id
                 )
                 if current_cost is None:
                     logger.debug(
-                        f"evaluate_thresholds: no monthly cost data for service_id={service_id}, skipping."
+                        f"No monthly cost data for service_id={service_id}, skipping."
                     )
                     skipped_no_cost += 1
                     continue
-                # reference_date for monthly = first day of current billing month
                 bp_result = await session.get(BillingPeriod, current_bp_id)
                 ref_date = (
                     bp_result.start_date.date()
@@ -265,7 +258,7 @@ async def evaluate_thresholds(
                     else date.today().replace(day=1)
                 )
 
-            # 2. Fetch history
+            # 2. Fetch history and compute threshold
             if period_type == PeriodType.DAILY:
                 since_date = date.today() - timedelta(
                     days=anomaly_cfg.alert_history_days
@@ -280,34 +273,43 @@ async def evaluate_thresholds(
                     limit=anomaly_cfg.alert_history_months,
                 )
 
-            # 3. Compute components
             absolute_component, statistical_component, percentage_component = (
                 _compute_components(
                     history, threshold.absolute_threshold, k, pct_buffer
                 )
             )
-
             effective = _effective_threshold(
                 absolute_component, statistical_component, percentage_component
             )
             if effective is None:
                 logger.debug(
-                    f"evaluate_thresholds: service_id={service_id} has no computable "
-                    "threshold components (no absolute set and insufficient history), skipping."
+                    f"service_id={service_id}: no computable threshold, skipping."
                 )
                 skipped_no_cost += 1
                 continue
 
             computed_threshold, winning_component = effective
 
-            # 4. Resolve service name for anomaly log
+            # 3. Resolve service name
             service_obj = await session.get(AzureService, service_id)
             service_name = (
                 service_obj.name if service_obj else f"service_id={service_id}"
             )
 
-            # 5. Skip if current cost does not breach — log as non-alert detection
+            # 4. Existing open incident?
+            existing = await get_open_incident(session, service_id, period_type)
+
             if current_cost <= computed_threshold:
+                # No breach
+                if existing is not None:
+                    # Cost came back down — auto-resolve
+                    await resolve_incident(session, existing)
+                    resolved_incidents += 1
+                    logger.info(
+                        f"RESOLVED — service_id={service_id} incident_id={existing.id} "
+                        f"cost={current_cost} is now <= threshold={computed_threshold}"
+                    )
+
                 await create_anomaly_log(
                     session,
                     service_id=service_id,
@@ -321,41 +323,69 @@ async def evaluate_thresholds(
                     computed_threshold=computed_threshold,
                     winning_component=winning_component,
                     is_alert_fired=False,
-                    alert_event_id=None,
+                    alert_event_id=existing.id if existing else None,
                 )
                 continue
 
-            # 6. Dedup — skip if an open alert already exists
-            existing_open = await get_open_alert(session, service_id, period_type)
-            if existing_open is not None:
-                logger.debug(
-                    f"evaluate_thresholds: open alert id={existing_open.id} already exists "
-                    f"for service_id={service_id} period_type={period_type}, skipping."
+            # Breach
+            if existing is None:
+                # Fresh breach — open new incident
+                effective_cooldown = threshold.cooldown_minutes or global_cooldown
+                logger.warning(
+                    f"NEW BREACH — service_id={service_id} period={period_type.value} "
+                    f"cost={current_cost} > threshold={computed_threshold} "
+                    f"(rule={winning_component}) cooldown={effective_cooldown}m"
                 )
-                skipped_open_alert += 1
-                continue
+                incident = await open_incident(
+                    session,
+                    threshold_id=threshold.id,  # type: ignore[arg-type]
+                    service_id=service_id,
+                    period_type=period_type,
+                    reference_date=ref_date,
+                    current_cost=current_cost,
+                    computed_threshold=computed_threshold,
+                    absolute_component=absolute_component,
+                    statistical_component=statistical_component,
+                    percentage_component=percentage_component,
+                    winning_component=winning_component,
+                    cooldown_minutes=effective_cooldown,
+                )
+                new_incidents += 1
+                notifications_sent += 1
+                newly_opened.append(incident)
 
-            # 7. Create the alert event
-            logger.warning(
-                f"ALERT BREACH — service_id={service_id} period_type={period_type.value} "
-                f"current_cost={current_cost} > computed_threshold={computed_threshold} "
-                f"(winning={winning_component})"
-            )
-            event = await create_alert_event(
-                session,
-                threshold_id=threshold.id,  # type: ignore[arg-type]
-                service_id=service_id,
-                period_type=period_type,
-                reference_date=ref_date,
-                current_cost=current_cost,
-                computed_threshold=computed_threshold,
-                absolute_component=absolute_component,
-                statistical_component=statistical_component,
-                percentage_component=percentage_component,
-                winning_component=winning_component,
-            )
+            else:
+                # Ongoing breach — update cost fields on existing incident
+                ongoing_incidents += 1
+                incident = await update_incident_cost(
+                    session,
+                    existing,
+                    current_cost=current_cost,
+                    computed_threshold=computed_threshold,
+                    absolute_component=absolute_component,
+                    statistical_component=statistical_component,
+                    percentage_component=percentage_component,
+                    winning_component=winning_component,
+                    reference_date=ref_date,
+                )
 
-            # 8. Log the breach
+                if is_cooldown_elapsed(incident):
+                    # Cooldown elapsed — send reminder
+                    incident = await record_notification(session, incident)
+                    notifications_sent += 1
+                    reminder_events.append(incident)
+                    logger.info(
+                        f"REMINDER — service_id={service_id} incident_id={incident.id} "
+                        f"notification #{incident.notification_count} "
+                        f"cost={current_cost} threshold={computed_threshold}"
+                    )
+                else:
+                    skipped_cooldown += 1
+                    logger.debug(
+                        f"COOLDOWN — service_id={service_id} incident_id={incident.id} "
+                        f"skipping email, cooldown not elapsed."
+                    )
+
             await create_anomaly_log(
                 session,
                 service_id=service_id,
@@ -369,15 +399,13 @@ async def evaluate_thresholds(
                 computed_threshold=computed_threshold,
                 winning_component=winning_component,
                 is_alert_fired=True,
-                alert_event_id=event.id,
+                alert_event_id=incident.id,
             )
-            new_alert_events.append(event)
-            breaches += 1
 
         except AlertError:
             logger.warning(
                 f"Skipping threshold_id={threshold.id} service_id={service_id} "
-                "due to an alert query error."
+                "due to alert query error."
             )
             skipped_no_cost += 1
         except Exception as exc:
@@ -388,53 +416,50 @@ async def evaluate_thresholds(
             )
             skipped_no_cost += 1
 
-    #  Email notification
+    # Email dispatch
     receiver = anomaly_cfg.receiver_email
-    if (
-        new_alert_events
-        and settings.ALERT_EMAIL_ENABLED
-        and anomaly_cfg.email_enabled
-        and receiver
-    ):
+    email_ok = settings.ALERT_EMAIL_ENABLED and anomaly_cfg.email_enabled and receiver
+
+    all_to_notify = newly_opened + reminder_events
+    if all_to_notify and email_ok:
         try:
             await asyncio.get_running_loop().run_in_executor(
                 _email_executor,
                 _send_alert_email_sync,
-                new_alert_events,
+                all_to_notify,
                 receiver,
             )
         except Exception as exc:
             err_detail = f": {exc}" if settings.show_debug_info else "."
             logger.error(f"Failed to send alert email{err_detail}")
 
-    new_alert_reads = [_event_to_read(e) for e in new_alert_events]
-
     logger.info(
-        f"Alert evaluation complete — period={period_type.value} "
-        f"evaluated={evaluated} breaches={len(new_alert_events)} skipped={skipped_no_cost}"
+        f"Evaluation complete — period={period_type.value} evaluated={evaluated} "
+        f"new={new_incidents} ongoing={ongoing_incidents} resolved={resolved_incidents} "
+        f"notifications={notifications_sent} cooldown_skipped={skipped_cooldown}"
     )
 
     return AlertEvaluationSummary(
         evaluated=evaluated,
-        breaches=breaches,
+        new_incidents=new_incidents,
+        ongoing_incidents=ongoing_incidents,
+        resolved_incidents=resolved_incidents,
+        notifications_sent=notifications_sent,
         skipped_no_cost=skipped_no_cost,
-        skipped_open_alert=skipped_open_alert,
-        new_alerts=new_alert_reads,
+        skipped_cooldown=skipped_cooldown,
+        new_alerts=[_event_to_read(e) for e in newly_opened],
     )
 
 
 def _event_to_read(event: AlertEvent) -> AlertEventRead:
-    """Convert an AlertEvent ORM row to its API read model, resolving service_name
-    from the loaded relationship when available, falling back to the service_id."""
-    assert event.id is not None  # always set after DB commit
-    service_name: str
+    assert event.id is not None
     try:
         service_name = event.service.name
     except Exception:
         service_name = f"service_id={event.service_id}"
 
     return AlertEventRead(
-        id=event.id,  # asserted non-None above
+        id=event.id,
         threshold_id=event.threshold_id,
         service_id=event.service_id,
         service_name=service_name,
@@ -447,6 +472,10 @@ def _event_to_read(event: AlertEvent) -> AlertEventRead:
         percentage_component=event.percentage_component,
         winning_component=event.winning_component,
         status=event.status,
+        breach_started_at=event.breach_started_at,
+        breach_resolved_at=event.breach_resolved_at,
         acknowledged_at=event.acknowledged_at,
-        triggered_at=event.triggered_at,
+        last_notified_at=event.last_notified_at,
+        notification_count=event.notification_count,
+        cooldown_minutes=event.cooldown_minutes,
     )

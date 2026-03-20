@@ -6,6 +6,7 @@ from sqlalchemy import (
     Column,
     CheckConstraint,
     Index,
+    Integer,
     UniqueConstraint,
     DECIMAL,
     String,
@@ -199,7 +200,7 @@ class AnomalyLog(SQLModel, table=True):
     is_alert_fired: bool = Field(
         default=False,
         sa_column=Column(Boolean, nullable=False, default=False),
-        description="True if an AlertEvent was created for this detection.",
+        description="True if an AlertEvent was created/updated for this detection.",
     )
     alert_event_id: int | None = Field(
         default=None,
@@ -297,6 +298,14 @@ class AlertThreshold(SQLModel, table=True):
         sa_column=Column(DECIMAL(15, 2), nullable=True),
         description="Hard budget ceiling (business rule). Null = not configured.",
     )
+    cooldown_minutes: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, nullable=True),
+        description=(
+            "Per-threshold cooldown override in minutes. "
+            "If null, falls back to AnomalySettings.cooldown_minutes."
+        ),
+    )
     is_active: bool = Field(default=True, sa_column=Column(Boolean, default=True))
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True)), default_factory=_utcnow
@@ -313,7 +322,14 @@ class AlertThreshold(SQLModel, table=True):
 
 
 class AlertEvent(SQLModel, table=True):
-    """A recorded breach of an alert threshold."""
+    """One row per breach incident. Stays open for the entire duration of the
+    breach. Updated in-place on each evaluation cycle while the breach persists.
+
+    Status lifecycle:
+        open        → breach is ongoing
+        acknowledged → user manually silenced the incident (cost may still be high)
+        resolved    → cost dropped back below threshold (auto-closed)
+    """
 
     __tablename__ = "alert_event"
     __table_args__ = (
@@ -348,44 +364,68 @@ class AlertEvent(SQLModel, table=True):
         nullable=False,
         description="usage_date for daily; first day of billing month for monthly.",
     )
+    # Cost fields updated in-place on each evaluation cycle
     current_cost: Decimal = Field(
         sa_column=Column(DECIMAL(15, 2), nullable=False),
-        description="Cost value that triggered the alert.",
+        description="Latest cost value observed during this incident.",
     )
     computed_threshold: Decimal = Field(
         sa_column=Column(DECIMAL(15, 2), nullable=False),
-        description="max(...) threshold value that was breached.",
+        description="Latest computed threshold value.",
     )
     absolute_component: Decimal | None = Field(
         default=None,
         sa_column=Column(DECIMAL(15, 2), nullable=True),
-        description="User-set absolute threshold used in max().",
     )
     statistical_component: Decimal | None = Field(
         default=None,
         sa_column=Column(DECIMAL(15, 2), nullable=True),
-        description="mean + k * std component.",
     )
     percentage_component: Decimal | None = Field(
         default=None,
         sa_column=Column(DECIMAL(15, 2), nullable=True),
-        description="mean * percentage_buffer component.",
     )
     winning_component: str = Field(
         sa_column=Column(String(20), nullable=False),
-        description="Which component produced the highest threshold: absolute | statistical | percentage.",
     )
     status: str = Field(
         default="open",
         sa_column=Column(String(20), nullable=False, default="open"),
-        description="open | acknowledged",
+        description="open | acknowledged | resolved",
     )
-    acknowledged_at: datetime | None = Field(
-        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
-    )
-    triggered_at: datetime = Field(
+    # Incident lifecycle timestamps
+    breach_started_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
         default_factory=_utcnow,
+        description="When this incident was first opened.",
+    )
+    breach_resolved_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+        description="When cost dropped back below threshold (auto-resolved).",
+    )
+    acknowledged_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+        description="When the user manually acknowledged the incident.",
+    )
+    # Notification tracking
+    last_notified_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+        default_factory=_utcnow,
+        description="When the last email notification was sent for this incident.",
+    )
+    notification_count: int = Field(
+        default=1,
+        sa_column=Column(Integer, nullable=False, server_default="1"),
+        description="Total email notifications sent for this incident.",
+    )
+    cooldown_minutes: int = Field(
+        sa_column=Column(Integer, nullable=False),
+        description=(
+            "Cooldown window copied from the threshold (or global default) "
+            "at incident creation time. Controls minimum gap between repeat emails."
+        ),
     )
 
     # relationships
@@ -395,10 +435,7 @@ class AlertEvent(SQLModel, table=True):
 
 
 class AnomalySettings(SQLModel, table=True):
-    """Single-row table storing global anomaly detection configuration.
-
-    Only one row (id=1) should ever exist. Use upsert pattern to update.
-    """
+    """Single-row table storing global anomaly detection configuration."""
 
     __tablename__ = "anomaly_settings"
 
@@ -423,16 +460,24 @@ class AnomalySettings(SQLModel, table=True):
         gt=0,
         description="Number of past billing periods used for monthly statistics",
     )
+    cooldown_minutes: int = Field(
+        default=120,
+        sa_column=Column(Integer, nullable=False, server_default="120"),
+        description=(
+            "Global default cooldown between repeat notifications for the same "
+            "incident (minutes). Overridable per threshold."
+        ),
+    )
     updated_at: datetime = Field(
         default_factory=_utcnow, sa_column_kwargs={"onupdate": _utcnow}
     )
     receiver_email: str | None = Field(
         default=None,
         sa_column=Column(String(255), nullable=True),
-        description="Recipient email address for alert notifications (configured from UI).",
+        description="Recipient email address for alert notifications.",
     )
     email_enabled: bool = Field(
         default=False,
         sa_column=Column(Boolean, nullable=False, default=False),
-        description="Whether email notifications are enabled (toggleable from UI).",
+        description="Whether email notifications are enabled.",
     )

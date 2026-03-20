@@ -39,7 +39,6 @@ export async function fetchCostFromDb(
     currency: string;
     date: string;
   }
-
   interface DbResponse {
     data?: DbRecord[];
     total_cost?: number;
@@ -55,7 +54,6 @@ export async function fetchCostFromDb(
     currency: r.currency,
     date: r.date,
   }));
-
   return {
     data,
     total_cost: json.total_cost ?? data.reduce((s, r) => s + r.cost, 0),
@@ -76,8 +74,6 @@ export async function testConnection(): Promise<boolean> {
   }
 }
 
-// ── Alert Settings ────────────────────────────────────────────
-
 export async function getAlertSettings(): Promise<AnomalySettings> {
   const res = await fetch(`${base()}/alerts/settings`, {
     headers: defaultHeaders,
@@ -95,6 +91,7 @@ export async function updateAlertSettings(
       | "percentage_buffer"
       | "alert_history_days"
       | "alert_history_months"
+      | "cooldown_minutes"
       | "receiver_email"
       | "email_enabled"
     >
@@ -111,8 +108,6 @@ export async function updateAlertSettings(
   return json.data;
 }
 
-// ── Services ──────────────────────────────────────────────────
-
 export async function getAlertServices(): Promise<AzureService[]> {
   const res = await fetch(`${base()}/alerts/services`, {
     headers: defaultHeaders,
@@ -121,8 +116,6 @@ export async function getAlertServices(): Promise<AzureService[]> {
   const json = (await res.json()) as { data: AzureService[] };
   return json.data;
 }
-
-// ── Thresholds ────────────────────────────────────────────────
 
 export async function getAlertThresholds(params?: {
   service_id?: number;
@@ -146,6 +139,7 @@ export async function createAlertThreshold(payload: {
   service_id: number;
   period_type: string;
   absolute_threshold?: number | null;
+  cooldown_minutes?: number | null;
 }): Promise<AlertThreshold> {
   const res = await fetch(`${base()}/alerts/thresholds`, {
     method: "POST",
@@ -159,7 +153,11 @@ export async function createAlertThreshold(payload: {
 
 export async function updateAlertThreshold(
   id: number,
-  patch: { absolute_threshold?: number | null; is_active?: boolean },
+  patch: {
+    absolute_threshold?: number | null;
+    is_active?: boolean;
+    cooldown_minutes?: number | null;
+  },
 ): Promise<AlertThreshold> {
   const res = await fetch(`${base()}/alerts/thresholds/${id}`, {
     method: "PATCH",
@@ -195,8 +193,6 @@ export async function evaluateAlerts(
   if (!res.ok) throw new Error(`Alert evaluation failed: ${res.status}`);
 }
 
-// ── Alert Events ──────────────────────────────────────────────
-
 export async function getAlertEvents(params?: {
   status?: string;
   service_id?: number;
@@ -229,8 +225,6 @@ export async function acknowledgeAlertEvent(id: number): Promise<AlertEvent> {
   const json = (await res.json()) as { data: AlertEvent };
   return json.data;
 }
-
-// ── Anomaly Logs ──────────────────────────────────────────────
 
 export async function getAnomalyLogs(params?: {
   service_id?: number;

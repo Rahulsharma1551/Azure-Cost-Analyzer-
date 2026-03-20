@@ -58,7 +58,8 @@ async def fetch_and_save_daily_costs() -> None:
             summary = await evaluate_thresholds(session, PeriodType.DAILY)
         logger.info(
             f"Daily alert evaluation complete: evaluated={summary.evaluated} "
-            f"breaches={summary.breaches} new_alerts={summary.breaches}"
+            f"new={summary.new_incidents} ongoing={summary.ongoing_incidents} "
+            f"resolved={summary.resolved_incidents} notifications={summary.notifications_sent}"
         )
     except Exception as exc:
         logger.error(f"Daily alert evaluation failed (non-fatal): {exc}")
@@ -99,7 +100,8 @@ async def fetch_and_save_service_costs() -> None:
             summary = await evaluate_thresholds(session, PeriodType.MONTHLY)
         logger.info(
             f"Monthly alert evaluation complete: evaluated={summary.evaluated} "
-            f"breaches={summary.breaches} new_alerts={summary.breaches}"
+            f"new={summary.new_incidents} ongoing={summary.ongoing_incidents} "
+            f"resolved={summary.resolved_incidents} notifications={summary.notifications_sent}"
         )
     except Exception as exc:
         logger.error(f"Monthly alert evaluation failed (non-fatal): {exc}")

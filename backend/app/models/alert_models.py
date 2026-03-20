@@ -22,6 +22,14 @@ class AlertThresholdCreate(BaseModel):
         ge=0,
         description="Hard budget ceiling in the service's currency. Null = not configured.",
     )
+    cooldown_minutes: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Per-threshold cooldown override (minutes). "
+            "If null, the global setting is used."
+        ),
+    )
 
     @field_validator("absolute_threshold", mode="before")
     @classmethod
@@ -44,6 +52,11 @@ class AlertThresholdUpdate(BaseModel):
     is_active: bool | None = Field(
         default=None, description="Enable or disable the threshold."
     )
+    cooldown_minutes: int | None = Field(
+        default=None,
+        gt=0,
+        description="Per-threshold cooldown override (minutes). Pass null to use global.",
+    )
 
     @field_validator("absolute_threshold", mode="before")
     @classmethod
@@ -54,7 +67,7 @@ class AlertThresholdUpdate(BaseModel):
 
 
 class AlertThresholdRead(BaseModel):
-    """Full representation of a threshold, including denormalised service name."""
+    """Full representation of a threshold."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -63,13 +76,14 @@ class AlertThresholdRead(BaseModel):
     service_name: str
     period_type: PeriodType
     absolute_threshold: Decimal | None
+    cooldown_minutes: int | None
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
 
 class AlertEventRead(BaseModel):
-    """Full representation of a fired alert event."""
+    """Full representation of a breach incident."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -86,8 +100,14 @@ class AlertEventRead(BaseModel):
     percentage_component: Decimal | None
     winning_component: str
     status: str
+    # Incident lifecycle
+    breach_started_at: datetime
+    breach_resolved_at: datetime | None
     acknowledged_at: datetime | None
-    triggered_at: datetime
+    # Notification tracking
+    last_notified_at: datetime
+    notification_count: int
+    cooldown_minutes: int
 
 
 class AnomalyLogRead(BaseModel):
@@ -121,6 +141,7 @@ class AnomalySettingsRead(BaseModel):
     percentage_buffer: float
     alert_history_days: int
     alert_history_months: int
+    cooldown_minutes: int
     updated_at: datetime
     receiver_email: str | None
     email_enabled: bool
@@ -151,6 +172,11 @@ class AnomalySettingsUpdate(BaseModel):
         gt=0,
         description="Number of past billing periods used for monthly statistics",
     )
+    cooldown_minutes: int | None = Field(
+        default=None,
+        gt=0,
+        description="Global default cooldown between repeat notifications (minutes)",
+    )
     receiver_email: str | None = Field(
         default=None,
         description="Recipient email address for alert notifications.",
@@ -165,13 +191,12 @@ class AlertEvaluationSummary(BaseModel):
     """Summary returned by an evaluation run."""
 
     evaluated: int = Field(description="Number of thresholds evaluated")
-    breaches: int = Field(description="Number of new alert events created")
-    skipped_no_cost: int = Field(
-        description="Thresholds skipped because no current cost data was found"
+    new_incidents: int = Field(description="Fresh breach incidents opened")
+    ongoing_incidents: int = Field(description="Existing incidents still breaching")
+    resolved_incidents: int = Field(description="Incidents auto-resolved this cycle")
+    notifications_sent: int = Field(description="Emails sent this cycle")
+    skipped_no_cost: int = Field(description="Thresholds skipped — no cost data")
+    skipped_cooldown: int = Field(
+        description="Ongoing incidents skipped — cooldown not elapsed"
     )
-    skipped_open_alert: int = Field(
-        description="Thresholds skipped because an open alert already exists"
-    )
-    new_alerts: list[AlertEventRead] = Field(
-        description="Details of each newly created alert event"
-    )
+    new_alerts: list[AlertEventRead] = Field(description="Newly opened incident events")

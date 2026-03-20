@@ -10,7 +10,7 @@ export interface CostResponse {
   data: CostRecord[];
   total_cost: number;
   currency: string;
-  cache_hit?: boolean; // true when served from the backend TTL cache
+  cache_hit?: boolean;
 }
 
 export type Granularity = "daily" | "monthly";
@@ -23,8 +23,6 @@ export interface FilterSettings {
   startDate: string;
   endDate: string;
 }
-
-// ── Alert / Budget types ──────────────────────────────────────
 
 export type PeriodType = "daily" | "monthly";
 
@@ -40,6 +38,7 @@ export interface AlertThreshold {
   service_name: string;
   period_type: PeriodType;
   absolute_threshold: number | null;
+  cooldown_minutes: number | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -58,9 +57,13 @@ export interface AlertEvent {
   statistical_component: number | null;
   percentage_component: number | null;
   winning_component: string;
-  status: string;
+  status: "open" | "acknowledged" | "resolved";
+  breach_started_at: string;
+  breach_resolved_at: string | null;
   acknowledged_at: string | null;
-  triggered_at: string;
+  last_notified_at: string;
+  notification_count: number;
+  cooldown_minutes: number;
 }
 
 export interface AnomalyLogEntry {
@@ -86,6 +89,7 @@ export interface AnomalySettings {
   percentage_buffer: number;
   alert_history_days: number;
   alert_history_months: number;
+  cooldown_minutes: number;
   updated_at: string;
   receiver_email: string | null;
   email_enabled: boolean;

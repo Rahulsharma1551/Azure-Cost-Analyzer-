@@ -45,6 +45,8 @@ import {
   History,
   MoreHorizontal,
   PowerOff,
+  Clock,
+  ShieldCheck,
 } from "lucide-react";
 import {
   AnomalySettings,
@@ -69,8 +71,6 @@ import {
 } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
 
-// ── Helpers ───────────────────────────────────────────────────
-
 const formatCurrency = (v: number) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -85,12 +85,39 @@ const formatDate = (iso: string) =>
     day: "2-digit",
   });
 
-// ── Component ─────────────────────────────────────────────────
+const formatDateTime = (iso: string) =>
+  new Date(iso).toLocaleString("en-US", {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+const statusBadge = (status: AlertEvent["status"]) => {
+  if (status === "open")
+    return (
+      <Badge variant="destructive" className="text-[10px]">
+        open
+      </Badge>
+    );
+  if (status === "resolved")
+    return (
+      <Badge
+        variant="secondary"
+        className="text-[10px] bg-emerald-100 text-emerald-700"
+      >
+        resolved
+      </Badge>
+    );
+  return (
+    <Badge variant="secondary" className="text-[10px]">
+      acknowledged
+    </Badge>
+  );
+};
 
 export default function Budget() {
   const queryClient = useQueryClient();
-
-  // ── Data queries ──────────────────────────────────────────
 
   const { data: alertSettings, isLoading: isLoadingSettings } =
     useQuery<AnomalySettings>({
@@ -128,48 +155,39 @@ export default function Budget() {
     staleTime: 30_000,
   });
 
-  // ── Threshold form ─────────────────────────────────────────
-
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
   const [selectedPeriodType, setSelectedPeriodType] =
     useState<PeriodType>("monthly");
   const [absoluteThreshold, setAbsoluteThreshold] = useState<string>("");
+  const [thresholdCooldown, setThresholdCooldown] = useState<string>("");
   const [savingThreshold, setSavingThreshold] = useState(false);
-
-  // ── Email settings form ────────────────────────────────────
 
   const [receiverEmail, setReceiverEmail] = useState("");
   const [emailEnabled, setEmailEnabled] = useState(false);
   const [savingEmail, setSavingEmail] = useState(false);
 
-  // ── Detection settings form ────────────────────────────────
-
   const [kValue, setKValue] = useState<string>("2.0");
   const [pctBuffer, setPctBuffer] = useState<string>("50");
   const [historyDays, setHistoryDays] = useState<string>("30");
   const [historyMonths, setHistoryMonths] = useState<string>("3");
+  const [globalCooldown, setGlobalCooldown] = useState<string>("120");
   const [savingDetection, setSavingDetection] = useState(false);
-
-  // ── Acknowledge state ──────────────────────────────────────
 
   const [acknowledgingId, setAcknowledgingId] = useState<number | null>(null);
   const [deactivatingId, setDeactivatingId] = useState<number | null>(null);
 
-  // Pre-fill forms when settings load
   useEffect(() => {
     if (!alertSettings) return;
     setReceiverEmail(alertSettings.receiver_email ?? "");
     setEmailEnabled(alertSettings.email_enabled);
     setKValue(String(alertSettings.k_value));
-    // Display percentage_buffer as "% above average": (pb - 1) * 100
     setPctBuffer(
       String(Math.round((alertSettings.percentage_buffer - 1) * 100)),
     );
     setHistoryDays(String(alertSettings.alert_history_days));
     setHistoryMonths(String(alertSettings.alert_history_months));
+    setGlobalCooldown(String(alertSettings.cooldown_minutes));
   }, [alertSettings]);
-
-  // ── Threshold create/update ────────────────────────────────
 
   const handleCreateThreshold = async () => {
     if (!selectedServiceId) {
@@ -189,6 +207,18 @@ export default function Budget() {
       });
       return;
     }
+    const cooldown = thresholdCooldown
+      ? parseInt(thresholdCooldown)
+      : undefined;
+    if (cooldown !== undefined && (isNaN(cooldown) || cooldown <= 0)) {
+      toast({
+        title: "Invalid cooldown",
+        description: "Cooldown must be a positive number of minutes.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSavingThreshold(true);
     try {
       const svcId = parseInt(selectedServiceId);
@@ -199,6 +229,7 @@ export default function Budget() {
         await updateAlertThreshold(existing.id, {
           absolute_threshold: amount,
           is_active: true,
+          cooldown_minutes: cooldown ?? null,
         });
         toast({
           title: "✓ Threshold updated",
@@ -209,6 +240,7 @@ export default function Budget() {
           service_id: svcId,
           period_type: selectedPeriodType,
           absolute_threshold: amount,
+          cooldown_minutes: cooldown ?? null,
         });
         const svcName =
           services.find((s) => s.id === svcId)?.name ?? `service #${svcId}`;
@@ -218,15 +250,15 @@ export default function Budget() {
         });
       }
       queryClient.invalidateQueries({ queryKey: ["alert-thresholds"] });
-      // Trigger immediate evaluation so alerts fire for the new threshold
       try {
         await evaluateAlerts(selectedPeriodType);
         queryClient.invalidateQueries({ queryKey: ["alert-events-open"] });
         queryClient.invalidateQueries({ queryKey: ["anomaly-logs"] });
       } catch {
-        // Evaluation failure is non-fatal; threshold was saved
+        // non-fatal
       }
       setAbsoluteThreshold("");
+      setThresholdCooldown("");
     } catch (err) {
       toast({
         title: "Failed to save threshold",
@@ -237,8 +269,6 @@ export default function Budget() {
       setSavingThreshold(false);
     }
   };
-
-  // ── Email settings save ────────────────────────────────────
 
   const handleSaveEmailSettings = async () => {
     if (emailEnabled && !receiverEmail) {
@@ -273,19 +303,19 @@ export default function Budget() {
     }
   };
 
-  // ── Detection settings save ────────────────────────────────
-
   const handleSaveDetection = async () => {
     const k = parseFloat(kValue);
     const pb = parseFloat(pctBuffer);
     const hd = parseInt(historyDays);
     const hm = parseInt(historyMonths);
+    const cd = parseInt(globalCooldown);
     if (
-      [k, pb, hd, hm].some(isNaN) ||
+      [k, pb, hd, hm, cd].some(isNaN) ||
       k <= 0 ||
       pb <= 0 ||
       hd <= 0 ||
-      hm <= 0
+      hm <= 0 ||
+      cd <= 0
     ) {
       toast({
         title: "Invalid values",
@@ -296,12 +326,12 @@ export default function Budget() {
     }
     setSavingDetection(true);
     try {
-      // Convert display value back: stored percentage_buffer = 1 + pb/100
       await updateAlertSettings({
         k_value: k,
         percentage_buffer: 1 + pb / 100,
         alert_history_days: hd,
         alert_history_months: hm,
+        cooldown_minutes: cd,
       });
       queryClient.invalidateQueries({ queryKey: ["alert-settings"] });
       toast({ title: "✓ Detection settings saved" });
@@ -316,17 +346,14 @@ export default function Budget() {
     }
   };
 
-  // ── Acknowledge ────────────────────────────────────────────
-
   const handleAcknowledge = async (id: number) => {
     setAcknowledgingId(id);
     try {
       await acknowledgeAlertEvent(id);
       queryClient.invalidateQueries({ queryKey: ["alert-events-open"] });
       toast({
-        title: "✓ Alert acknowledged",
-        description:
-          "New alerts for this service will be triggered again on next evaluation.",
+        title: "✓ Incident acknowledged",
+        description: "The incident has been manually closed.",
       });
     } catch (err) {
       toast({
@@ -356,8 +383,6 @@ export default function Budget() {
     }
   };
 
-  // ── Render ─────────────────────────────────────────────────
-
   return (
     <div className="p-6 space-y-6">
       {/* Page header */}
@@ -370,9 +395,8 @@ export default function Budget() {
         </p>
       </div>
 
-      {/* ── Two-column layout ─────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* ── Left stack (2 / 3) ─────────────────────────── */}
+        {/* Left stack (2/3) */}
         <div className="lg:col-span-2 space-y-6">
           {/* Set Budget Threshold */}
           <Card className="border-border bg-card">
@@ -383,7 +407,6 @@ export default function Budget() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Service selector */}
               <div className="space-y-1.5">
                 <Label htmlFor="service-select" className="text-sm">
                   Azure Service
@@ -417,7 +440,6 @@ export default function Budget() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                {/* Period type */}
                 <div className="space-y-1.5">
                   <Label className="text-sm">Period Type</Label>
                   <Select
@@ -435,11 +457,9 @@ export default function Budget() {
                     </SelectContent>
                   </Select>
                 </div>
-
-                {/* Budget amount */}
                 <div className="space-y-1.5">
                   <Label htmlFor="budget-amount" className="text-sm">
-                    Monthly Budget
+                    Budget Amount
                   </Label>
                   <div className="relative">
                     <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -456,6 +476,28 @@ export default function Budget() {
                 </div>
               </div>
 
+              <div className="space-y-1.5">
+                <Label htmlFor="threshold-cooldown" className="text-sm">
+                  Cooldown Override
+                  <span className="ml-1 text-xs text-muted-foreground">
+                    minutes · leave blank to use global (
+                    {alertSettings?.cooldown_minutes ?? 120}m)
+                  </span>
+                </Label>
+                <div className="relative">
+                  <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="threshold-cooldown"
+                    type="number"
+                    min={1}
+                    placeholder={`e.g. ${alertSettings?.cooldown_minutes ?? 120}`}
+                    value={thresholdCooldown}
+                    onChange={(e) => setThresholdCooldown(e.target.value)}
+                    className="pl-8"
+                  />
+                </div>
+              </div>
+
               <Button
                 onClick={handleCreateThreshold}
                 disabled={savingThreshold}
@@ -464,10 +506,9 @@ export default function Budget() {
                 {savingThreshold && (
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
                 )}
-                Create Alert
+                Create / Update Alert
               </Button>
 
-              {/* Existing thresholds list */}
               {thresholds.length > 0 && (
                 <div className="pt-4 border-t border-border">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
@@ -493,6 +534,12 @@ export default function Budget() {
                               ? formatCurrency(t.absolute_threshold)
                               : "—"}
                           </span>
+                          {t.cooldown_minutes != null && (
+                            <span className="text-xs text-muted-foreground flex items-center gap-0.5">
+                              <Clock className="h-3 w-3" />
+                              {t.cooldown_minutes}m
+                            </span>
+                          )}
                           <Badge
                             variant={t.is_active ? "default" : "secondary"}
                             className="text-xs"
@@ -564,19 +611,6 @@ export default function Budget() {
                       onChange={(e) => setReceiverEmail(e.target.value)}
                     />
                   </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-sm">Alert Frequency</Label>
-                    <Select defaultValue="immediately">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="immediately">Immediately</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
                   <div className="flex items-center gap-3">
                     <input
                       type="checkbox"
@@ -592,7 +626,6 @@ export default function Budget() {
                       Enable email notifications
                     </Label>
                   </div>
-
                   <Button
                     onClick={handleSaveEmailSettings}
                     disabled={savingEmail}
@@ -616,14 +649,14 @@ export default function Budget() {
                 Detection Settings
               </CardTitle>
               <CardDescription className="text-xs">
-                Controls the statistical anomaly detection engine used to
-                compute adaptive thresholds.
+                Controls the statistical anomaly detection engine and
+                notification cooldown.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {isLoadingSettings ? (
                 <div className="space-y-3">
-                  {Array.from({ length: 4 }).map((_, i) => (
+                  {Array.from({ length: 5 }).map((_, i) => (
                     <Skeleton key={i} className="h-9 rounded" />
                   ))}
                 </div>
@@ -634,7 +667,7 @@ export default function Budget() {
                       <Label htmlFor="pct-buffer" className="text-sm">
                         Alert Buffer
                         <span className="ml-1 text-xs text-muted-foreground">
-                          % above historical avg
+                          % above avg
                         </span>
                       </Label>
                       <Input
@@ -645,7 +678,6 @@ export default function Budget() {
                         onChange={(e) => setPctBuffer(e.target.value)}
                       />
                     </div>
-
                     <div className="space-y-1.5">
                       <Label htmlFor="k-value" className="text-sm">
                         Statistical Sensitivity
@@ -662,7 +694,6 @@ export default function Budget() {
                         onChange={(e) => setKValue(e.target.value)}
                       />
                     </div>
-
                     <div className="space-y-1.5">
                       <Label htmlFor="history-days" className="text-sm">
                         Daily History Window
@@ -678,7 +709,6 @@ export default function Budget() {
                         onChange={(e) => setHistoryDays(e.target.value)}
                       />
                     </div>
-
                     <div className="space-y-1.5">
                       <Label htmlFor="history-months" className="text-sm">
                         Monthly History Window
@@ -694,8 +724,26 @@ export default function Budget() {
                         onChange={(e) => setHistoryMonths(e.target.value)}
                       />
                     </div>
+                    <div className="col-span-2 space-y-1.5">
+                      <Label htmlFor="global-cooldown" className="text-sm">
+                        Global Cooldown
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          minutes between repeat emails for the same incident
+                        </span>
+                      </Label>
+                      <div className="relative">
+                        <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          id="global-cooldown"
+                          type="number"
+                          min={1}
+                          value={globalCooldown}
+                          onChange={(e) => setGlobalCooldown(e.target.value)}
+                          className="pl-8"
+                        />
+                      </div>
+                    </div>
                   </div>
-
                   <Button
                     onClick={handleSaveDetection}
                     disabled={savingDetection}
@@ -713,14 +761,15 @@ export default function Budget() {
           </Card>
         </div>
 
-        {/* ── Right column (1 / 3) ───────────────────────── */}
+        {/* Right column (1/3)*/}
         <div className="space-y-6">
+          {/* Active Incidents */}
           <Card className="border-border bg-card">
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center justify-between text-base">
                 <span className="flex items-center gap-2">
                   <Bell className="h-4 w-4 text-primary" />
-                  Active Alerts
+                  Active Incidents
                 </span>
                 {activeAlerts.length > 0 && (
                   <Badge variant="destructive" className="text-xs tabular-nums">
@@ -733,12 +782,12 @@ export default function Budget() {
               {isLoadingActive ? (
                 <div className="space-y-3">
                   {Array.from({ length: 3 }).map((_, i) => (
-                    <Skeleton key={i} className="h-20 rounded" />
+                    <Skeleton key={i} className="h-24 rounded" />
                   ))}
                 </div>
               ) : activeAlerts.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-8">
-                  No active alerts. Create one to get started.
+                  No active incidents.
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -753,7 +802,8 @@ export default function Budget() {
                             {alert.service_name}
                           </p>
                           <p className="text-xs text-muted-foreground capitalize">
-                            {alert.period_type} · {alert.reference_date}
+                            {alert.period_type} · started{" "}
+                            {formatDateTime(alert.breach_started_at)}
                           </p>
                         </div>
                         <AlertTriangle className="h-4 w-4 shrink-0 text-destructive mt-0.5" />
@@ -772,6 +822,18 @@ export default function Budget() {
                         <Badge variant="secondary" className="text-[10px]">
                           {alert.winning_component}
                         </Badge>
+                      </div>
+
+                      {/* Notification count + cooldown info */}
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <ShieldCheck className="h-3 w-3" />
+                        <span>
+                          {alert.notification_count} notification
+                          {alert.notification_count !== 1 ? "s" : ""} sent
+                        </span>
+                        <span>·</span>
+                        <Clock className="h-3 w-3" />
+                        <span>{alert.cooldown_minutes}m cooldown</span>
                       </div>
 
                       <Button
@@ -797,7 +859,7 @@ export default function Budget() {
         </div>
       </div>
 
-      {/* ── Alert History (full-width) ─────────────────────── */}
+      {/* Incident History */}
       <Card className="border-border bg-card">
         <CardHeader className="pb-4">
           <CardTitle className="flex items-center gap-2 text-base">

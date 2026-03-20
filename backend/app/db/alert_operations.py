@@ -1,9 +1,9 @@
 """Database operations for the alert threshold and alert event tables."""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlmodel import col, select, func
+from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from db.models import (
@@ -20,9 +20,6 @@ from models.alert_models import (
     AlertThresholdUpdate,
     AnomalySettingsUpdate,
 )
-
-
-# Threshold operations
 
 
 async def create_threshold(
@@ -48,6 +45,7 @@ async def create_threshold(
         service_id=payload.service_id,
         period_type=payload.period_type,
         absolute_threshold=payload.absolute_threshold,
+        cooldown_minutes=payload.cooldown_minutes,
         is_active=True,
     )
     session.add(threshold)
@@ -63,7 +61,7 @@ async def get_thresholds(
     period_type: PeriodType | None = None,
     active_only: bool = True,
 ) -> list[AlertThreshold]:
-    """Return thresholds, optionally filtered by service, period type, and active status."""
+    """Return thresholds, optionally filtered."""
     query = select(AlertThreshold)
     if service_id is not None:
         query = query.where(AlertThreshold.service_id == service_id)
@@ -85,12 +83,12 @@ async def update_threshold(
     if threshold is None:
         raise ValueError(f"AlertThreshold id={threshold_id} not found.")
 
-    if payload.absolute_threshold is not None or (
-        "absolute_threshold" in payload.model_fields_set
-    ):
+    if "absolute_threshold" in payload.model_fields_set:
         threshold.absolute_threshold = payload.absolute_threshold
     if payload.is_active is not None:
         threshold.is_active = payload.is_active
+    if "cooldown_minutes" in payload.model_fields_set:
+        threshold.cooldown_minutes = payload.cooldown_minutes
     threshold.updated_at = datetime.now(timezone.utc)
 
     session.add(threshold)
@@ -103,7 +101,7 @@ async def deactivate_threshold(
     session: AsyncSession,
     threshold_id: int,
 ) -> AlertThreshold:
-    """Soft-delete a threshold by setting is_active=False. Raises ValueError if not found."""
+    """Soft-delete a threshold by setting is_active=False."""
     threshold = await session.get(AlertThreshold, threshold_id)
     if threshold is None:
         raise ValueError(f"AlertThreshold id={threshold_id} not found.")
@@ -116,15 +114,12 @@ async def deactivate_threshold(
     return threshold
 
 
-# Alert event operations
-
-
-async def get_open_alert(
+async def get_open_incident(
     session: AsyncSession,
     service_id: int,
     period_type: PeriodType,
 ) -> AlertEvent | None:
-    """Return the most recent open (unacknowledged) alert for a service+period, or None."""
+    """Return the current open incident for a service+period, or None."""
     result = await session.exec(
         select(AlertEvent)
         .where(
@@ -132,13 +127,13 @@ async def get_open_alert(
             AlertEvent.period_type == period_type,
             AlertEvent.status == "open",
         )
-        .order_by(col(AlertEvent.triggered_at).desc())
+        .order_by(col(AlertEvent.breach_started_at).desc())
         .limit(1)
     )
     return result.first()
 
 
-async def create_alert_event(
+async def open_incident(
     session: AsyncSession,
     *,
     threshold_id: int,
@@ -151,8 +146,10 @@ async def create_alert_event(
     statistical_component: Decimal | None,
     percentage_component: Decimal | None,
     winning_component: str,
+    cooldown_minutes: int,
 ) -> AlertEvent:
-    """Persist a new alert event and return it."""
+    """Create a new breach incident and return it."""
+    now = datetime.now(timezone.utc)
     event = AlertEvent(
         threshold_id=threshold_id,
         service_id=service_id,
@@ -165,12 +162,97 @@ async def create_alert_event(
         percentage_component=percentage_component,
         winning_component=winning_component,
         status="open",
-        triggered_at=datetime.now(timezone.utc),
+        breach_started_at=now,
+        last_notified_at=now,
+        notification_count=1,
+        cooldown_minutes=cooldown_minutes,
     )
     session.add(event)
     await session.commit()
     await session.refresh(event)
     return event
+
+
+async def update_incident_cost(
+    session: AsyncSession,
+    incident: AlertEvent,
+    *,
+    current_cost: Decimal,
+    computed_threshold: Decimal,
+    absolute_component: Decimal | None,
+    statistical_component: Decimal | None,
+    percentage_component: Decimal | None,
+    winning_component: str,
+    reference_date: date,
+) -> AlertEvent:
+    """Update the latest cost fields on an ongoing incident.
+    Does NOT update notification tracking — that is handled separately.
+    """
+    incident.current_cost = current_cost
+    incident.computed_threshold = computed_threshold
+    incident.absolute_component = absolute_component
+    incident.statistical_component = statistical_component
+    incident.percentage_component = percentage_component
+    incident.winning_component = winning_component
+    incident.reference_date = reference_date
+    session.add(incident)
+    await session.commit()
+    await session.refresh(incident)
+    return incident
+
+
+async def record_notification(
+    session: AsyncSession,
+    incident: AlertEvent,
+) -> AlertEvent:
+    """Stamp last_notified_at = now and increment notification_count."""
+    incident.last_notified_at = datetime.now(timezone.utc)
+    incident.notification_count += 1
+    session.add(incident)
+    await session.commit()
+    await session.refresh(incident)
+    return incident
+
+
+async def resolve_incident(
+    session: AsyncSession,
+    incident: AlertEvent,
+) -> AlertEvent:
+    """Auto-resolve an incident when cost drops back below threshold."""
+    incident.status = "resolved"
+    incident.breach_resolved_at = datetime.now(timezone.utc)
+    session.add(incident)
+    await session.commit()
+    await session.refresh(incident)
+    return incident
+
+
+async def acknowledge_alert(
+    session: AsyncSession,
+    alert_id: int,
+) -> AlertEvent:
+    """Manually acknowledge an open incident. Raises ValueError if not found
+    or already closed."""
+    event = await session.get(AlertEvent, alert_id)
+    if event is None:
+        raise ValueError(f"AlertEvent id={alert_id} not found.")
+    if event.status != "open":
+        raise ValueError(f"AlertEvent id={alert_id} is already '{event.status}'.")
+    event.status = "acknowledged"
+    event.acknowledged_at = datetime.now(timezone.utc)
+    session.add(event)
+    await session.commit()
+    await session.refresh(event)
+    return event
+
+
+def is_cooldown_elapsed(incident: AlertEvent) -> bool:
+    """Return True if enough time has passed since the last notification
+    to send another reminder email."""
+    elapsed = datetime.now(timezone.utc) - incident.last_notified_at.replace(
+        tzinfo=timezone.utc
+    )
+    return elapsed >= timedelta(minutes=incident.cooldown_minutes)
 
 
 async def list_alert_events(
@@ -182,8 +264,7 @@ async def list_alert_events(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[AlertEvent], int]:
-    """Return alert events, optionally filtered.
-    Returns a tuple of (events, total_count) for pagination metadata."""
+    """Return alert events with optional filters and pagination."""
     conditions = []
     if status is not None:
         conditions.append(AlertEvent.status == status)
@@ -197,11 +278,10 @@ async def list_alert_events(
         count_query = count_query.where(*conditions)
     total = (await session.exec(count_query)).one()
 
-    # Paginated data query
     data_query = (
         select(AlertEvent)
         .where(*conditions)
-        .order_by(col(AlertEvent.triggered_at).desc())
+        .order_by(col(AlertEvent.breach_started_at).desc())
         .offset(offset)
         .limit(limit)
     )
@@ -209,47 +289,41 @@ async def list_alert_events(
     return list(result.all()), total
 
 
-async def acknowledge_alert(
-    session: AsyncSession,
-    alert_id: int,
-) -> AlertEvent:
-    """Acknowledge an open alert event. Raises ValueError if not found or already acknowledged."""
-    event = await session.get(AlertEvent, alert_id)
-    if event is None:
-        raise ValueError(f"AlertEvent id={alert_id} not found.")
-    if event.status != "open":
-        raise ValueError(
-            f"AlertEvent id={alert_id} is already '{event.status}' and cannot be acknowledged again."
-        )
-    event.status = "acknowledged"
-    event.acknowledged_at = datetime.now(timezone.utc)
-    session.add(event)
-    await session.commit()
-    await session.refresh(event)
-    return event
-
-
-# History queries
-
-
 async def get_daily_cost_history(
     session: AsyncSession,
     service_id: int,
     since_date: date,
 ) -> list[Decimal]:
-    """Return daily cost amounts for a service from since_date up to yesterday (exclusive today)."""
+    """Return daily cost amounts for a service from since_date up to yesterday."""
     today = date.today()
     result = await session.exec(
         select(DailyCost).where(
             DailyCost.service_id == service_id,
             DailyCost.usage_date >= since_date,
-            DailyCost.usage_date < today,  # exclude today's partial day
+            DailyCost.usage_date < today,
         )
     )
     return [row.cost_amount for row in result.all() if row.cost_amount is not None]
 
 
-# Anomaly log operations
+async def get_monthly_cost_history(
+    session: AsyncSession,
+    service_id: int,
+    exclude_billing_period_id: int,
+    limit: int,
+) -> list[Decimal]:
+    """Return monthly cost amounts for a service from past billing periods,
+    excluding the current period."""
+    result = await session.exec(
+        select(ServiceCost)
+        .where(
+            ServiceCost.service_id == service_id,
+            ServiceCost.billing_period_id != exclude_billing_period_id,
+        )
+        .order_by(col(ServiceCost.billing_period_id).desc())
+        .limit(limit)
+    )
+    return [row.cost_amount for row in result.all() if row.cost_amount is not None]
 
 
 async def create_anomaly_log(
@@ -268,7 +342,7 @@ async def create_anomaly_log(
     is_alert_fired: bool,
     alert_event_id: int | None,
 ) -> AnomalyLog:
-    """Persist an anomaly detection record regardless of whether an alert fired."""
+    """Persist an anomaly detection record."""
     log = AnomalyLog(
         service_id=service_id,
         service_name=service_name,
@@ -311,9 +385,6 @@ async def list_anomaly_logs(
     return list(result.all())
 
 
-# Anomaly settings operations
-
-
 async def get_anomaly_settings(session: AsyncSession) -> AnomalySettings:
     """Return the single AnomalySettings row. Raises RuntimeError if not seeded."""
     result = await session.exec(select(AnomalySettings).limit(1))
@@ -341,6 +412,8 @@ async def update_anomaly_settings(
         row.alert_history_days = payload.alert_history_days
     if payload.alert_history_months is not None:
         row.alert_history_months = payload.alert_history_months
+    if payload.cooldown_minutes is not None:
+        row.cooldown_minutes = payload.cooldown_minutes
     if payload.email_enabled is not None:
         row.email_enabled = payload.email_enabled
     if "receiver_email" in payload.model_fields_set:
@@ -354,14 +427,12 @@ async def update_anomaly_settings(
 
 
 async def seed_anomaly_settings(session: AsyncSession) -> None:
-    """Insert the default AnomalySettings row (id=1) if it does not exist.
-    Uses env-based settings as the initial defaults.
-    """
+    """Insert the default AnomalySettings row (id=1) if it does not exist."""
     from config import settings as app_settings
 
     result = await session.exec(select(AnomalySettings).limit(1))
     if result.first() is not None:
-        return  # Already seeded
+        return
 
     row = AnomalySettings(
         id=1,
@@ -369,26 +440,7 @@ async def seed_anomaly_settings(session: AsyncSession) -> None:
         percentage_buffer=app_settings.ALERT_PERCENTAGE_BUFFER,
         alert_history_days=app_settings.ALERT_HISTORY_DAYS,
         alert_history_months=app_settings.ALERT_HISTORY_MONTHS,
+        cooldown_minutes=120,
     )
     session.add(row)
     await session.commit()
-
-
-async def get_monthly_cost_history(
-    session: AsyncSession,
-    service_id: int,
-    exclude_billing_period_id: int,
-    limit: int,
-) -> list[Decimal]:
-    """Return monthly cost amounts for a service from past billing periods,
-    excluding the current period (to avoid contaminating stats with MTD data)."""
-    result = await session.exec(
-        select(ServiceCost)
-        .where(
-            ServiceCost.service_id == service_id,
-            ServiceCost.billing_period_id != exclude_billing_period_id,
-        )
-        .order_by(col(ServiceCost.billing_period_id).desc())
-        .limit(limit)
-    )
-    return [row.cost_amount for row in result.all() if row.cost_amount is not None]
