@@ -3,13 +3,9 @@ import globals from "globals";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
-import { defineConfig } from "eslint/config";
 
-export default defineConfig([
+export default [
   {
-    // Ignore build output and auto-generated shadcn/ui components.
-    // The ui/ folder is managed by the shadcn CLI and intentionally
-    // exports both components and constants from the same file.
     ignores: ["dist", "src/components/ui/**"],
   },
   {
@@ -25,11 +21,8 @@ export default defineConfig([
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      "react-refresh/only-export-components": [
-        "warn",
-        { allowConstantExport: true },
-      ],
+      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       "@typescript-eslint/no-unused-vars": "off",
     },
   },
-]);
+];

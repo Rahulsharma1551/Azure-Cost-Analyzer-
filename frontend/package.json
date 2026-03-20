@@ -89,7 +89,6 @@
     "lint-staged": "^16.3.2",
     "lovable-tagger": "^1.1.13",
     "postcss": "^8.5.6",
-    "pre-commit": "^1.2.2",
     "prettier": "^3.8.1",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3",
@@ -98,6 +97,9 @@
     "vitest": "^3.2.4"
   },
   "lint-staged": {
-    "*.{ts,tsx,js,jsx}": "npm run format && npm run lint"
+    "*.{ts,tsx,js,jsx}": [
+      "prettier --write",
+      "eslint --fix"
+    ]
   }
 }
