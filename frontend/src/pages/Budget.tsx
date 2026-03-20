@@ -59,7 +59,6 @@ import {
   getAlertSettings,
   updateAlertSettings,
   getAlertEvents,
-  getAnomalyLogs,
   getAlertThresholds,
   getAlertServices,
   createAlertThreshold,
@@ -145,11 +144,11 @@ export default function Budget() {
     refetchInterval: 30_000,
   });
 
-  const { data: anomalyLogs = [], isLoading: isLoadingHistory } = useQuery<
-    AnomalyLogEntry[]
+  const { data: alertHistory = [], isLoading: isLoadingHistory } = useQuery<
+    AlertEvent[]
   >({
-    queryKey: ["anomaly-logs"],
-    queryFn: () => getAnomalyLogs({ limit: 100 }),
+    queryKey: ["alert-events-history"],
+    queryFn: () => getAlertEvents({ limit: 100 }),
     staleTime: 30_000,
   });
 
@@ -793,26 +792,32 @@ export default function Budget() {
                 <Skeleton key={i} className="h-10 rounded" />
               ))}
             </div>
-          ) : anomalyLogs.length === 0 ? (
+          ) : alertHistory.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">
-              No detection history yet.
+              No alert history yet.
             </p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="text-xs font-semibold">DATE</TableHead>
+                  <TableHead className="text-xs font-semibold">
+                    STARTED
+                  </TableHead>
                   <TableHead className="text-xs font-semibold">
                     SERVICE
                   </TableHead>
                   <TableHead className="text-xs font-semibold">
-                    ALERT TYPE
+                    PERIOD
                   </TableHead>
+                  <TableHead className="text-xs font-semibold">RULE</TableHead>
                   <TableHead className="text-xs font-semibold text-right">
-                    CURRENT SPEND
+                    COST
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-right">
                     THRESHOLD
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold text-center">
+                    NOTIFICATIONS
                   </TableHead>
                   <TableHead className="text-xs font-semibold text-center">
                     STATUS
@@ -820,35 +825,44 @@ export default function Budget() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {anomalyLogs.map((log) => (
-                  <TableRow key={log.id}>
+                {alertHistory.map((event) => (
+                  <TableRow key={event.id}>
                     <TableCell className="text-sm">
-                      {formatDate(log.detected_at)}
+                      {formatDateTime(event.breach_started_at)}
                     </TableCell>
                     <TableCell className="text-sm font-medium">
-                      {log.service_name}
+                      {event.service_name}
                     </TableCell>
                     <TableCell className="text-sm capitalize">
-                      {log.winning_component === "absolute"
-                        ? "Budget Threshold"
-                        : log.winning_component === "statistical"
-                          ? "Statistical Anomaly"
-                          : "Percentage Spike"}
+                      {event.period_type}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {event.winning_component === "absolute"
+                        ? "Budget Ceiling"
+                        : event.winning_component === "statistical"
+                          ? "Statistical"
+                          : "Percentage"}
+                    </TableCell>
+                    <TableCell className="text-sm text-right text-destructive font-medium">
+                      {formatCurrency(event.current_cost)}
                     </TableCell>
                     <TableCell className="text-sm text-right">
-                      {formatCurrency(log.current_cost)}
+                      {formatCurrency(event.computed_threshold)}
                     </TableCell>
-                    <TableCell className="text-sm text-right">
-                      {formatCurrency(log.computed_threshold)}
+                    <TableCell className="text-sm text-center tabular-nums">
+                      {event.notification_count}
                     </TableCell>
                     <TableCell className="text-center">
-                      {log.is_alert_fired ? (
+                      {event.status === "open" ? (
                         <Badge variant="destructive" className="text-xs">
-                          Triggered
+                          open
                         </Badge>
                       ) : (
-                        <Badge variant="secondary" className="text-xs">
-                          Normal
+                        <Badge
+                          variant="secondary"
+                          className="text-xs bg-emerald-100 text-emerald-700"
+                        >
+                          resolved
                         </Badge>
                       )}
                     </TableCell>
