@@ -474,7 +474,6 @@ def _event_to_read(event: AlertEvent) -> AlertEventRead:
         status=event.status,
         breach_started_at=event.breach_started_at,
         breach_resolved_at=event.breach_resolved_at,
-        acknowledged_at=event.acknowledged_at,
         last_notified_at=event.last_notified_at,
         notification_count=event.notification_count,
         cooldown_minutes=event.cooldown_minutes,

@@ -45,7 +45,6 @@ async def create_threshold(
         service_id=payload.service_id,
         period_type=payload.period_type,
         absolute_threshold=payload.absolute_threshold,
-        cooldown_minutes=payload.cooldown_minutes,
         is_active=True,
     )
     session.add(threshold)
